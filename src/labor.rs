@@ -1,0 +1,17 @@
+pub enum JobFunction {
+    CropTender,
+    Shepherd,
+    Butcher,
+    Fisherman,
+    Woodsman,
+    HouseCarpenter,
+    FishingBoatBuilder,
+    WarShipbuilder,
+    TraderShipbuilder,
+    Quarryman,
+    HouseMason,
+    FortificationMason,
+    Soldier,
+    Marine,
+    Trader,
+}
