@@ -42,7 +42,8 @@ cargo +nightly fmt
 - **Resources:** Grain, Timber, Iron, Tools.
 - **Prices:** Island-local, inventory-driven (`base_cost / (inventory + 1.0)`).
 - **Information flow:** Price ledgers are merged only during ship-island docking interactions.
-- **Planning:** Current route planning is a simple utility heuristic; confidence-decay and richer economics are planned next.
+- **Planning:** Route selection combines utility with confidence decay based on data staleness + transit time, and includes probabilistic speculation to break deterministic route loops.
+- **Dock cadence:** Ships that sell on a tick stay docked for at least that tick (no immediate departure while empty), then can reload and depart on a following tick.
 
 ## Tech Stack (Current)
 

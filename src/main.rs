@@ -8,7 +8,9 @@ use world::{World, WORLD_SIZE};
 
 #[macroquad::main("Archipelago")]
 async fn main() {
-    let mut world = World::new(30, 50);
+    const NUM_ISLANDS: usize = 20;
+    const NUM_SHIPS: usize = 100;
+    let mut world = World::new(NUM_ISLANDS, NUM_SHIPS);
 
     loop {
         // Camera maps simulation space (WORLD_SIZE x WORLD_SIZE) to the screen.

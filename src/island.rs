@@ -144,20 +144,33 @@ impl Island {
         let border_thickness = 1.0 * world_units_per_pixel;
         let origin_x = self.pos.x - chart_width * 0.5;
         let origin_y = self.pos.y - chart_height * 0.5;
+        let frame_x = origin_x - panel_padding;
+        let frame_y = origin_y - panel_padding;
+        let frame_w = chart_width + panel_padding * 2.0;
+        let frame_h = chart_height + panel_padding * 2.0;
 
         draw_rectangle(
-            origin_x - panel_padding,
-            origin_y - panel_padding,
-            chart_width + panel_padding * 2.0,
-            chart_height + panel_padding * 2.0,
+            frame_x,
+            frame_y,
+            frame_w,
+            frame_h,
             Color::from_rgba(12, 24, 40, 180),
         );
-        draw_rectangle_lines(
-            origin_x - panel_padding,
-            origin_y - panel_padding,
-            chart_width + panel_padding * 2.0,
-            chart_height + panel_padding * 2.0,
+
+        draw_rectangle(frame_x, frame_y, frame_w, border_thickness, WHITE);
+        draw_rectangle(
+            frame_x,
+            frame_y + frame_h - border_thickness,
+            frame_w,
             border_thickness,
+            WHITE,
+        );
+        draw_rectangle(frame_x, frame_y, border_thickness, frame_h, WHITE);
+        draw_rectangle(
+            frame_x + frame_w - border_thickness,
+            frame_y,
+            border_thickness,
+            frame_h,
             WHITE,
         );
 

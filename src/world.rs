@@ -2,7 +2,7 @@ use ::rand::Rng;
 use macroquad::prelude::*;
 
 use crate::island::Island;
-use crate::ship::Ship;
+use crate::ship::{DockAction, Ship};
 
 pub const WORLD_SIZE: f32 = 5000.0;
 
@@ -78,6 +78,7 @@ impl World {
 
     fn process_docked_ships(&mut self) {
         let mut ships_by_island = vec![Vec::new(); self.islands.len()];
+        let mut sold_this_tick = vec![false; self.ships.len()];
         for (ship_idx, ship) in self.ships.iter().enumerate() {
             if let Some(island_id) = ship.docked_island() {
                 if island_id < self.islands.len() {
@@ -99,7 +100,10 @@ impl World {
 
                 for &ship_idx in ship_indices {
                     self.ships[ship_idx].begin_dock_tick();
-                    let _ = self.ships[ship_idx].trade_unload_if_carrying(island);
+                    let unload_action = self.ships[ship_idx].trade_unload_if_carrying(island);
+                    if unload_action == DockAction::Sold {
+                        sold_this_tick[ship_idx] = true;
+                    }
                 }
 
                 island.recompute_local_prices(self.tick);
@@ -109,10 +113,15 @@ impl World {
                 }
 
                 for &ship_idx in ship_indices {
+                    if sold_this_tick[ship_idx] {
+                        continue;
+                    }
                     self.ships[ship_idx].sync_ledgers_with_island(island);
-                    if let Some(target_island_id) =
-                        self.ships[ship_idx].plan_next_island(island_id, &island_positions)
-                    {
+                    if let Some(target_island_id) = self.ships[ship_idx].plan_next_island(
+                        island_id,
+                        &island_positions,
+                        self.tick,
+                    ) {
                         if target_island_id != island_id {
                             departure_orders.push((ship_idx, target_island_id));
                         }

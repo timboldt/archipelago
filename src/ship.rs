@@ -1,9 +1,14 @@
+use ::rand::Rng;
 use macroquad::prelude::*;
 use strum::IntoEnumIterator;
 
 use crate::island::{Island, PriceEntry, PriceLedger, Resource, RESOURCE_COUNT};
 
 const TRADE_LOT_SIZE: f32 = 16.0;
+const CONFIDENCE_DECAY_K: f32 = 0.003;
+const SPECULATION_FLOOR: f32 = 0.08;
+const SPECULATION_STALENESS_SCALE: f32 = 0.35;
+const SPECULATION_UNCERTAINTY_BONUS: f32 = 8.0;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Cargo {
@@ -131,9 +136,12 @@ impl Ship {
         &self,
         current_island_id: usize,
         island_positions: &[Vec2],
+        current_tick: u64,
     ) -> Option<usize> {
+        let mut candidates: Vec<(usize, f32, f32)> = Vec::new();
         let mut best_target = None;
         let mut best_utility = f32::NEG_INFINITY;
+        let mut best_confidence = 0.0;
         let baseline_price = if let Some(cargo) = self.cargo {
             self.ledger
                 .get(current_island_id)
@@ -147,23 +155,63 @@ impl Ship {
             if target_id == current_island_id {
                 continue;
             }
-            let distance_cost = if target_id < island_positions.len() {
-                (island_positions[target_id] - self.pos).length() * 0.01
+            let distance = if target_id < island_positions.len() {
+                (island_positions[target_id] - self.pos).length()
             } else {
                 0.0
             };
+            let distance_cost = distance * 0.01;
+            let transit_time = distance / self.speed.max(1.0);
+            let data_age = current_tick.saturating_sub(self.ledger[target_id].tick_updated) as f32;
+            let confidence = (-CONFIDENCE_DECAY_K * (data_age + transit_time))
+                .exp()
+                .clamp(0.05, 1.0);
 
             let utility = if let Some(cargo) = self.cargo {
                 let target_price = self.ledger[target_id].prices[cargo.resource.idx()];
-                ((target_price - baseline_price) * cargo.amount) - distance_cost
+                ((target_price - baseline_price) * cargo.amount * confidence) - distance_cost
             } else {
-                -distance_cost
+                let target_best_buy_price = self.ledger[target_id]
+                    .prices
+                    .iter()
+                    .copied()
+                    .fold(f32::INFINITY, f32::min)
+                    .max(0.0);
+                -(target_best_buy_price * confidence * 2.0) - distance_cost
             };
+
+            candidates.push((target_id, utility, confidence));
 
             if utility > best_utility {
                 best_utility = utility;
                 best_target = Some(target_id);
+                best_confidence = confidence;
             }
+        }
+
+        if candidates.is_empty() {
+            return best_target;
+        }
+
+        let speculation_chance = (SPECULATION_FLOOR
+            + (1.0 - best_confidence) * SPECULATION_STALENESS_SCALE)
+            .clamp(SPECULATION_FLOOR, 0.60);
+
+        let mut rng = ::rand::thread_rng();
+        if rng.gen_bool(speculation_chance as f64) {
+            let mut speculative_target = best_target;
+            let mut speculative_score = f32::NEG_INFINITY;
+
+            for (target_id, utility, confidence) in candidates {
+                let noise = rng.gen_range(-2.0..2.0);
+                let score = utility + (1.0 - confidence) * SPECULATION_UNCERTAINTY_BONUS + noise;
+                if score > speculative_score {
+                    speculative_score = score;
+                    speculative_target = Some(target_id);
+                }
+            }
+
+            return speculative_target;
         }
 
         best_target
