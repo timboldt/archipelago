@@ -233,7 +233,7 @@ impl World {
         let mut daughters: Vec<Ship> = Vec::new();
 
         for (idx, ship) in self.ships.iter_mut().enumerate() {
-            if ship.cash < scuttle_threshold {
+            if ship.estimated_net_worth() < scuttle_threshold {
                 scuttle_mask[idx] = true;
                 continue;
             }

@@ -2,10 +2,15 @@ use ::rand::Rng;
 use macroquad::prelude::*;
 use strum::IntoEnumIterator;
 
-use crate::island::{BASE_COSTS, Island, PriceEntry, PriceLedger, Resource, RESOURCE_COUNT};
+use crate::island::{
+    ASK_PRICE_MULTIPLIER, BASE_COSTS, BID_PRICE_MULTIPLIER, Island, PriceEntry, PriceLedger,
+    Resource, RESOURCE_COUNT,
+};
 
 const TRADE_LOT_SIZE: f32 = 16.0;
 pub const STARTING_CASH: f32 = 200.0;
+const UNKNOWN_CASH_CONFIDENCE_SCALE: f32 = 0.70;
+const DEFAULT_MARKET_DEPTH_FALLBACK: f32 = 600.0;
 
 #[derive(Clone, Copy, Debug)]
 pub struct PlanningTuning {
@@ -132,6 +137,7 @@ impl Ship {
             ledger: vec![
                 PriceEntry {
                     prices: [0.0; RESOURCE_COUNT],
+                    cash: 0.0,
                     tick_updated: 0,
                     last_seen_tick: 0,
                 };
@@ -235,6 +241,21 @@ impl Ship {
         self.docked_at
     }
 
+    pub fn estimated_net_worth(&self) -> f32 {
+        let mut net_worth = self.cash.max(0.0);
+        if let Some(cargo) = self.cargo {
+            let cargo_book_price = self
+                .last_purchase
+                .filter(|purchase| purchase.resource == cargo.resource)
+                .map(|purchase| purchase.unit_price)
+                .unwrap_or_else(|| self.median_price_for_resource(cargo.resource));
+            let conservative_cargo_value = (cargo_book_price * BID_PRICE_MULTIPLIER * cargo.amount)
+                .max(0.0);
+            net_worth += conservative_cargo_value;
+        }
+        net_worth
+    }
+
     pub fn just_sold_resource(&self) -> Option<Resource> {
         self.just_sold_resource
     }
@@ -332,7 +353,7 @@ impl Ship {
                 continue;
             }
             let idx = resource.idx();
-            let local_price = island.local_prices[idx];
+            let local_price = island.ask_price(resource);
             if !local_price.is_finite() || local_price <= 0.0 {
                 continue;
             }
@@ -374,6 +395,10 @@ impl Ship {
             return self.last_dock_action;
         }
 
+        if best_utility <= 0.0 {
+            return self.last_dock_action;
+        }
+
         let Some(chosen_resource) = chosen_resource else {
             return self.last_dock_action;
         };
@@ -398,7 +423,7 @@ impl Ship {
             amount: filled,
         });
         self.last_purchase = Some(PurchaseRecord {
-            unit_price: chosen_local_price,
+            unit_price: total_cost / filled,
             resource: chosen_resource,
         });
         self.planned_target_after_load = Some(chosen_target);
@@ -559,7 +584,7 @@ impl Ship {
 
             let mut best_resource_utility = f32::NEG_INFINITY;
             for resource in Resource::iter() {
-                let buy_price = current_prices[resource.idx()];
+                let buy_price = current_prices[resource.idx()] * ASK_PRICE_MULTIPLIER;
                 let (utility, _confidence) = self.calculate_utility(
                     resource,
                     target_id,
@@ -601,6 +626,27 @@ impl Ship {
             (prices[mid - 1] + prices[mid]) * 0.5
         } else {
             prices[mid]
+        }
+    }
+
+    fn median_island_cash(&self) -> Option<f32> {
+        let mut cash_values: Vec<f32> = self
+            .ledger
+            .iter()
+            .map(|entry| entry.cash)
+            .filter(|cash| cash.is_finite() && *cash > 0.0)
+            .collect();
+
+        if cash_values.is_empty() {
+            return None;
+        }
+
+        cash_values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let mid = cash_values.len() / 2;
+        if cash_values.len().is_multiple_of(2) {
+            Some((cash_values[mid - 1] + cash_values[mid]) * 0.5)
+        } else {
+            Some(cash_values[mid])
         }
     }
 
@@ -651,10 +697,11 @@ impl Ship {
         let quoted_sell_price = self.ledger[target_id].prices[resource.idx()];
         let has_quoted_sell_price = quoted_sell_price.is_finite() && quoted_sell_price > 0.0;
         let median_market_price = self.median_price_for_resource(resource);
+        let quoted_bid_price = quoted_sell_price * BID_PRICE_MULTIPLIER;
         let expected_sell_price = if has_quoted_sell_price {
-            quoted_sell_price
+            quoted_bid_price
         } else if median_market_price > 0.0 {
-            median_market_price
+            median_market_price * BID_PRICE_MULTIPLIER
         } else {
             buy_price
         };
@@ -671,8 +718,23 @@ impl Ship {
             confidence = (confidence * 0.45).clamp(0.02, 1.0);
         }
 
-        let profit_per_unit = expected_sell_price - buy_price;
-        let expected_profit = (profit_per_unit * lot_size.max(0.0)) * confidence;
+        let quoted_island_cash = self.ledger[target_id].cash;
+        let has_quoted_cash = quoted_island_cash.is_finite() && quoted_island_cash > 0.0;
+        let fallback_cash = self
+            .median_island_cash()
+            .unwrap_or(DEFAULT_MARKET_DEPTH_FALLBACK)
+            .max(DEFAULT_MARKET_DEPTH_FALLBACK);
+        let market_depth_cash = if has_quoted_cash {
+            quoted_island_cash
+        } else {
+            confidence = (confidence * UNKNOWN_CASH_CONFIDENCE_SCALE).clamp(0.02, 1.0);
+            fallback_cash
+        };
+
+        let gross_expected_revenue = expected_sell_price * lot_size.max(0.0);
+        let real_expected_revenue = gross_expected_revenue.min(market_depth_cash * 0.9);
+        let real_expected_profit = real_expected_revenue - (buy_price * lot_size.max(0.0));
+        let expected_profit = real_expected_profit * confidence;
         let fuel_cost = distance * context.tuning.transport_cost_per_distance;
 
         let last_seen_tick = self.ledger[target_id].last_seen_tick;

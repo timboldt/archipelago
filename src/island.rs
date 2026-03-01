@@ -5,6 +5,8 @@ use strum_macros::EnumIter;
 
 pub const RESOURCE_COUNT: usize = 4;
 pub const BASE_COSTS: [f32; RESOURCE_COUNT] = [20.0, 30.0, 45.0, 70.0];
+pub const BID_PRICE_MULTIPLIER: f32 = 0.95;
+pub const ASK_PRICE_MULTIPLIER: f32 = 1.05;
 const INVENTORY_CARRYING_CAPACITY: f32 = 180.0;
 const INITIAL_POPULATION_MIN: f32 = 45.0;
 const INITIAL_POPULATION_MAX: f32 = 140.0;
@@ -20,6 +22,17 @@ const TOOL_FABRICATION_BASE_RATE: f32 = 0.28;
 const GRAIN_EXTRACTION_BONUS: f32 = 1.35;
 const PER_CAPITA_CASH_GENERATION: f32 = 0.22;
 const INDUSTRIAL_CASH_GENERATION: f32 = 0.18;
+const SCARCITY_LOG_SCALE: f32 = 2.4;
+const SCARCITY_REFERENCE: f32 = 120.0;
+const SPECIALIZATION_ZERO_PROBABILITY: f32 = 0.35;
+const FOCUS_PRODUCTION_BOOST: f32 = 1.9;
+const NON_FOCUS_PRODUCTION_SCALE: f32 = 0.78;
+const TOOLS_PRODUCTIVITY_CAP: f32 = 2.0;
+const TOOLS_PRODUCTIVITY_SCALE: f32 = 0.22;
+const CAPITAL_INVESTMENT_THRESHOLD: f32 = 2200.0;
+const CAPITAL_INVESTMENT_RATE: f32 = 0.06;
+const INFRASTRUCTURE_INVESTMENT_EFFICIENCY: f32 = 0.00016;
+const MAX_INFRASTRUCTURE_LEVEL: f32 = 3.5;
 const POPULATION_DISPLAY_SCALE: f32 = 150.0;
 const CASH_DISPLAY_SCALE: f32 = 800.0;
 const INFRASTRUCTURE_DISPLAY_MAX: f32 = 2.0;
@@ -44,6 +57,7 @@ pub type Inventory = [f32; RESOURCE_COUNT];
 #[derive(Clone, Copy, Debug)]
 pub struct PriceEntry {
     pub prices: [f32; RESOURCE_COUNT],
+    pub cash: f32,
     pub tick_updated: u64,
     pub last_seen_tick: u64,
 }
@@ -73,8 +87,42 @@ impl Island {
         for resource in Resource::iter() {
             let index = resource.idx();
             inventory[index] = rng.gen_range(25.0..125.0);
-            production_rates[index] = rng.gen_range(0.5..2.2);
+            production_rates[index] = match resource {
+                Resource::Tools => 0.0,
+                Resource::Grain => rng.gen_range(0.8..2.6),
+                Resource::Timber | Resource::Iron => {
+                    if rng.gen_bool(SPECIALIZATION_ZERO_PROBABILITY as f64) {
+                        0.0
+                    } else {
+                        rng.gen_range(0.4..2.0)
+                    }
+                }
+            };
             consumption_rates[index] = rng.gen_range(0.4..1.9);
+        }
+
+        if production_rates[Resource::Timber.idx()] <= 0.0
+            && production_rates[Resource::Iron.idx()] <= 0.0
+        {
+            if rng.gen_bool(0.5) {
+                production_rates[Resource::Timber.idx()] = rng.gen_range(0.5..1.4);
+            } else {
+                production_rates[Resource::Iron.idx()] = rng.gen_range(0.5..1.4);
+            }
+        }
+
+        let focus_resource = match rng.gen_range(0..3) {
+            0 => Resource::Grain,
+            1 => Resource::Timber,
+            _ => Resource::Iron,
+        };
+        for resource in [Resource::Grain, Resource::Timber, Resource::Iron] {
+            let index = resource.idx();
+            if resource == focus_resource {
+                production_rates[index] *= FOCUS_PRODUCTION_BOOST;
+            } else {
+                production_rates[index] *= NON_FOCUS_PRODUCTION_SCALE;
+            }
         }
 
         let mut island = Self {
@@ -91,6 +139,7 @@ impl Island {
             ledger: vec![
                 PriceEntry {
                     prices: [0.0; RESOURCE_COUNT],
+                    cash: 0.0,
                     tick_updated: 0,
                     last_seen_tick: 0,
                 };
@@ -118,11 +167,15 @@ impl Island {
                 (1.0 - (inventory / INVENTORY_CARRYING_CAPACITY)).clamp(0.0, 1.0);
 
             if resource != Resource::Tools {
+                let tools_boost =
+                    (1.0 + self.inventory[Resource::Tools.idx()] * TOOLS_PRODUCTIVITY_SCALE)
+                        .clamp(1.0, TOOLS_PRODUCTIVITY_CAP);
                 let mut extraction =
                     self.production_rates[index] * self.population * logistic_factor * dt;
                 if resource == Resource::Grain {
                     extraction *= GRAIN_EXTRACTION_BONUS;
                 }
+                extraction *= tools_boost;
                 self.inventory[index] += extraction;
             }
 
@@ -151,16 +204,29 @@ impl Island {
                 * dt;
         self.cash += local_economic_income.max(0.0);
 
+        if self.cash > CAPITAL_INVESTMENT_THRESHOLD {
+            let excess_capital = self.cash - CAPITAL_INVESTMENT_THRESHOLD;
+            let investment = (excess_capital * CAPITAL_INVESTMENT_RATE * dt).min(self.cash);
+            self.cash -= investment;
+            self.infrastructure_level = (self.infrastructure_level
+                + investment * INFRASTRUCTURE_INVESTMENT_EFFICIENCY)
+                .min(MAX_INFRASTRUCTURE_LEVEL);
+        }
+
         self.recompute_local_prices(tick);
     }
 
     pub fn recompute_local_prices(&mut self, tick: u64) {
         for resource in Resource::iter() {
             let index = resource.idx();
-            self.local_prices[index] = BASE_COSTS[index] / (self.inventory[index] + 1.0);
+            let inventory = self.inventory[index].max(0.0);
+            let scarcity_pressure = (SCARCITY_REFERENCE / (inventory + 1.0)).ln_1p();
+            self.local_prices[index] =
+                BASE_COSTS[index] * (1.0 + SCARCITY_LOG_SCALE * scarcity_pressure);
         }
         if let Some(entry) = self.ledger.get_mut(self.id) {
             entry.prices = self.local_prices;
+            entry.cash = self.cash;
             entry.tick_updated = tick;
         }
     }
@@ -176,7 +242,7 @@ impl Island {
             return (0.0, 0.0);
         }
         let index = resource.idx();
-        let price = self.local_prices[index];
+        let price = self.bid_price(resource);
         if !price.is_finite() || price <= 0.0 || self.cash <= 0.0 {
             return (0.0, 0.0);
         }
@@ -204,9 +270,17 @@ impl Island {
             return (0.0, 0.0);
         }
         self.inventory[index] -= filled;
-        let total_cost = filled * self.local_prices[index];
+        let total_cost = filled * self.ask_price(resource);
         self.cash += total_cost;
         (filled, total_cost)
+    }
+
+    pub fn bid_price(&self, resource: Resource) -> f32 {
+        self.local_prices[resource.idx()] * BID_PRICE_MULTIPLIER
+    }
+
+    pub fn ask_price(&self, resource: Resource) -> f32 {
+        self.local_prices[resource.idx()] * ASK_PRICE_MULTIPLIER
     }
 
     pub fn merge_ledger(&mut self, incoming: &PriceLedger) {
@@ -217,6 +291,7 @@ impl Island {
             }
             if incoming_entry.tick_updated > self.ledger[i].tick_updated {
                 self.ledger[i].prices = incoming_entry.prices;
+                self.ledger[i].cash = incoming_entry.cash;
                 self.ledger[i].tick_updated = incoming_entry.tick_updated;
             }
             if incoming_entry.last_seen_tick > self.ledger[i].last_seen_tick {
@@ -230,6 +305,7 @@ impl Island {
         for (i, ship_entry) in ship_ledger.iter_mut().enumerate().take(len) {
             if self.ledger[i].tick_updated >= ship_entry.tick_updated {
                 ship_entry.prices = self.ledger[i].prices;
+                ship_entry.cash = self.ledger[i].cash;
                 ship_entry.tick_updated = self.ledger[i].tick_updated;
             }
             if self.ledger[i].last_seen_tick >= ship_entry.last_seen_tick {
