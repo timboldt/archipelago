@@ -44,13 +44,16 @@ cargo +nightly fmt
 - **Tuning HUD:** The same panel shows the live `speculation_floor` value.
 - **Resources:** Grain, Timber, Iron, Tools.
 - **Prices:** Island-local, inventory-driven (`base_cost / (inventory + 1.0)`).
+- **Transport cost:** Cargo accrues freight cost while traveling; planning accounts for projected freight and realized P&L applies a capped freight deduction.
+- **Load selection:** Empty ships choose cargo by expected net margin (confidence-weighted destination spread minus transport cost), not just lowest local price.
 - **Information flow:** Price ledgers are merged only during ship-island docking interactions.
 - **Planning:** Route selection combines utility with confidence decay based on data staleness + transit time, and includes probabilistic speculation to break deterministic route loops.
 - **Speculation behavior:** Speculation probability now increases further when the currently best destination is crowded, and speculative picks sample among top candidates to improve route diversity.
+- **Outlier rescue:** Each actor gossips a `last_seen_tick` estimate per island through ledgers; stale/rarely seen islands receive a capped neglect bonus during planning.
 - **Anti-herding:** Planning applies congestion using a decaying memory of recent departures from the current island to each destination (`from -> to`), reducing local gold-rush pileups without global coordination.
 - **Ship learning:** Each ship maintains a decaying destination memory updated by realized trade margins, and this memory biases future route utility.
 - **Dock cadence:** Ships that sell on a tick stay docked for at least that tick (no immediate departure while empty), then can reload and depart on a following tick.
-- **Tuning controls:** `main.rs` exposes planning/speculation/learning constants (`confidence_decay_k`, `speculation_floor`, `speculation_staleness_scale`, `speculation_uncertainty_bonus`, `learning_rate`, `learning_decay`, `learning_weight`, `congestion_penalty`, `congestion_exponent`, `route_congestion_decay`) and applies them via `World::set_planning_tuning(...)`.
+- **Tuning controls:** `main.rs` exposes planning/speculation/learning constants (`confidence_decay_k`, `speculation_floor`, `speculation_staleness_scale`, `speculation_uncertainty_bonus`, `learning_rate`, `learning_decay`, `learning_weight`, `congestion_penalty`, `congestion_exponent`, `route_congestion_decay`, `transport_cost_per_distance`, `island_neglect_bonus_per_tick`, `island_neglect_bonus_cap`) and applies them via `World::set_planning_tuning(...)`.
 - **Live tuning:** Press `[` and `]` during runtime to decrease/increase `speculation_floor`.
 
 ## Tech Stack (Current)

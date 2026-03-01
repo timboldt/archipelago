@@ -27,6 +27,7 @@ pub type Inventory = [f32; RESOURCE_COUNT];
 pub struct PriceEntry {
     pub prices: [f32; RESOURCE_COUNT],
     pub tick_updated: u64,
+    pub last_seen_tick: u64,
 }
 
 pub type PriceLedger = Vec<PriceEntry>;
@@ -66,6 +67,7 @@ impl Island {
                 PriceEntry {
                     prices: [0.0; RESOURCE_COUNT],
                     tick_updated: 0,
+                    last_seen_tick: 0,
                 };
                 num_islands
             ],
@@ -95,6 +97,12 @@ impl Island {
         }
     }
 
+    pub fn mark_seen(&mut self, tick: u64) {
+        if let Some(entry) = self.ledger.get_mut(self.id) {
+            entry.last_seen_tick = tick;
+        }
+    }
+
     pub fn sell_to_island(&mut self, resource: Resource, amount: f32) -> f32 {
         if amount <= 0.0 {
             return 0.0;
@@ -121,7 +129,11 @@ impl Island {
         let len = self.ledger.len().min(incoming.len());
         for (i, incoming_entry) in incoming.iter().copied().enumerate().take(len) {
             if incoming_entry.tick_updated > self.ledger[i].tick_updated {
-                self.ledger[i] = incoming_entry;
+                self.ledger[i].prices = incoming_entry.prices;
+                self.ledger[i].tick_updated = incoming_entry.tick_updated;
+            }
+            if incoming_entry.last_seen_tick > self.ledger[i].last_seen_tick {
+                self.ledger[i].last_seen_tick = incoming_entry.last_seen_tick;
             }
         }
     }
@@ -130,7 +142,11 @@ impl Island {
         let len = ship_ledger.len().min(self.ledger.len());
         for (i, ship_entry) in ship_ledger.iter_mut().enumerate().take(len) {
             if self.ledger[i].tick_updated >= ship_entry.tick_updated {
-                *ship_entry = self.ledger[i];
+                ship_entry.prices = self.ledger[i].prices;
+                ship_entry.tick_updated = self.ledger[i].tick_updated;
+            }
+            if self.ledger[i].last_seen_tick >= ship_entry.last_seen_tick {
+                ship_entry.last_seen_tick = self.ledger[i].last_seen_tick;
             }
         }
     }

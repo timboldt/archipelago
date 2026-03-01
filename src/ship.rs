@@ -18,6 +18,9 @@ pub struct PlanningTuning {
     pub congestion_penalty: f32,
     pub congestion_exponent: f32,
     pub route_congestion_decay: f32,
+    pub transport_cost_per_distance: f32,
+    pub island_neglect_bonus_per_tick: f32,
+    pub island_neglect_bonus_cap: f32,
 }
 
 impl Default for PlanningTuning {
@@ -33,6 +36,9 @@ impl Default for PlanningTuning {
             congestion_penalty: 4.0,
             congestion_exponent: 1.15,
             route_congestion_decay: 0.94,
+            transport_cost_per_distance: 0.0006,
+            island_neglect_bonus_per_tick: 0.006,
+            island_neglect_bonus_cap: 18.0,
         }
     }
 }
@@ -42,6 +48,8 @@ struct PurchaseRecord {
     unit_price: f32,
     resource: Resource,
 }
+
+const MAX_REALIZED_FREIGHT_SHARE: f32 = 0.50;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Cargo {
@@ -67,6 +75,7 @@ pub struct Ship {
     pub ledger: PriceLedger,
     route_memory: Vec<f32>,
     last_purchase: Option<PurchaseRecord>,
+    cargo_distance_accrued: f32,
     last_dock_action: DockAction,
 }
 
@@ -84,11 +93,13 @@ impl Ship {
                 PriceEntry {
                     prices: [0.0; RESOURCE_COUNT],
                     tick_updated: 0,
+                    last_seen_tick: 0,
                 };
                 num_islands
             ],
             route_memory: vec![0.0; num_islands],
             last_purchase: None,
+            cargo_distance_accrued: 0.0,
             last_dock_action: DockAction::None,
         }
     }
@@ -121,15 +132,20 @@ impl Ship {
             return self.last_dock_action;
         }
         if let Some(cargo) = self.cargo.take() {
-            let revenue = island.sell_to_island(cargo.resource, cargo.amount);
-            self.cash += revenue;
+            let gross_revenue = island.sell_to_island(cargo.resource, cargo.amount);
+            let raw_freight_cost =
+                self.cargo_distance_accrued * cargo.amount * tuning.transport_cost_per_distance;
+            let realized_freight_cost =
+                raw_freight_cost.min(gross_revenue * MAX_REALIZED_FREIGHT_SHARE);
+            let net_revenue = gross_revenue - realized_freight_cost;
+            self.cash += net_revenue;
 
             if let Some(purchase) = self.last_purchase.take() {
                 if purchase.resource == cargo.resource
                     && cargo.amount > 0.0
                     && island_id < self.route_memory.len()
                 {
-                    let sale_unit_price = revenue / cargo.amount;
+                    let sale_unit_price = net_revenue / cargo.amount;
                     let normalized_margin =
                         (sale_unit_price - purchase.unit_price) / (purchase.unit_price + 1.0);
                     self.route_memory[island_id] += normalized_margin * tuning.learning_rate;
@@ -137,12 +153,21 @@ impl Ship {
                 }
             }
 
+            self.cargo_distance_accrued = 0.0;
+
             self.last_dock_action = DockAction::Sold;
         }
         self.last_dock_action
     }
 
-    pub fn trade_load_if_empty(&mut self, island: &mut Island) -> DockAction {
+    pub fn trade_load_if_empty(
+        &mut self,
+        current_island_id: usize,
+        island_positions: &[Vec2],
+        current_tick: u64,
+        tuning: &PlanningTuning,
+        island: &mut Island,
+    ) -> DockAction {
         if self.last_dock_action != DockAction::None {
             return self.last_dock_action;
         }
@@ -151,16 +176,57 @@ impl Ship {
         }
 
         let mut chosen_resource: Option<Resource> = None;
-        let mut lowest_price = f32::INFINITY;
+        let mut best_resource_score = f32::NEG_INFINITY;
+        let mut chosen_local_price = 0.0;
         for resource in Resource::iter() {
             let idx = resource.idx();
-            if island.local_prices[idx] < lowest_price {
-                lowest_price = island.local_prices[idx];
+            let local_price = island.local_prices[idx];
+            if !local_price.is_finite() || local_price <= 0.0 {
+                continue;
+            }
+
+            let mut best_expected_unit_margin = f32::NEG_INFINITY;
+            for target_id in 0..self.ledger.len() {
+                if target_id == current_island_id {
+                    continue;
+                }
+
+                let distance = if target_id < island_positions.len() {
+                    (island_positions[target_id] - self.pos).length()
+                } else {
+                    0.0
+                };
+                let transit_time = distance / self.speed.max(1.0);
+                let data_age =
+                    current_tick.saturating_sub(self.ledger[target_id].tick_updated) as f32;
+                let confidence = (-tuning.confidence_decay_k * (data_age + transit_time))
+                    .exp()
+                    .clamp(0.05, 1.0);
+
+                let target_price = self.ledger[target_id].prices[idx];
+                let transport_cost_unit = distance * tuning.transport_cost_per_distance;
+                let expected_unit_margin =
+                    ((target_price - local_price) * confidence) - transport_cost_unit;
+
+                if expected_unit_margin > best_expected_unit_margin {
+                    best_expected_unit_margin = expected_unit_margin;
+                }
+            }
+
+            let resource_score = if best_expected_unit_margin.is_finite() {
+                best_expected_unit_margin
+            } else {
+                -local_price * 0.25
+            };
+
+            if resource_score > best_resource_score {
+                best_resource_score = resource_score;
                 chosen_resource = Some(resource);
+                chosen_local_price = local_price;
             }
         }
 
-        if !lowest_price.is_finite() || lowest_price <= 0.0 {
+        if !chosen_local_price.is_finite() || chosen_local_price <= 0.0 {
             return self.last_dock_action;
         }
 
@@ -168,7 +234,7 @@ impl Ship {
             return self.last_dock_action;
         };
 
-        let affordable = (self.cash / lowest_price).max(0.0);
+        let affordable = (self.cash / chosen_local_price).max(0.0);
         let requested = TRADE_LOT_SIZE.min(affordable);
         if requested <= 0.0 {
             return self.last_dock_action;
@@ -184,9 +250,10 @@ impl Ship {
             amount: filled,
         });
         self.last_purchase = Some(PurchaseRecord {
-            unit_price: lowest_price,
+            unit_price: chosen_local_price,
             resource: chosen_resource,
         });
+        self.cargo_distance_accrued = 0.0;
         self.last_dock_action = DockAction::Bought;
         self.last_dock_action
     }
@@ -235,7 +302,11 @@ impl Ship {
 
             let utility = if let Some(cargo) = self.cargo {
                 let target_price = self.ledger[target_id].prices[cargo.resource.idx()];
-                ((target_price - baseline_price) * cargo.amount * confidence) - distance_cost
+                let projected_transport_cost =
+                    distance * cargo.amount * tuning.transport_cost_per_distance;
+                ((target_price - baseline_price) * cargo.amount * confidence)
+                    - distance_cost
+                    - projected_transport_cost
             } else {
                 let target_best_buy_price = self.ledger[target_id]
                     .prices
@@ -260,6 +331,11 @@ impl Ship {
             };
 
             let utility = utility + learned_bias - congestion_cost;
+            let last_seen_tick = self.ledger[target_id].last_seen_tick;
+            let neglect_ticks = current_tick.saturating_sub(last_seen_tick) as f32;
+            let neglect_bonus = (neglect_ticks * tuning.island_neglect_bonus_per_tick)
+                .min(tuning.island_neglect_bonus_cap);
+            let utility = utility + neglect_bonus;
 
             candidates.push((target_id, utility, confidence));
 
@@ -279,10 +355,17 @@ impl Ship {
             .unwrap_or(0.0)
             .max(0.0);
         let congestion_boost = (best_congestion * 0.03).min(0.20);
+        let best_neglect_ticks = best_target
+            .map(|target_id| {
+                current_tick.saturating_sub(self.ledger[target_id].last_seen_tick) as f32
+            })
+            .unwrap_or(0.0);
+        let neglect_boost = (best_neglect_ticks * 0.0008).min(0.20);
 
         let speculation_chance = (tuning.speculation_floor
             + (1.0 - best_confidence) * tuning.speculation_staleness_scale
-            + congestion_boost)
+            + congestion_boost
+            + neglect_boost)
             .clamp(tuning.speculation_floor, 0.85);
 
         let mut rng = ::rand::thread_rng();
@@ -339,10 +422,18 @@ impl Ship {
         }
         let step = self.speed * dt;
         if step >= dist {
+            if let Some(cargo) = self.cargo {
+                let _ = cargo;
+                self.cargo_distance_accrued += dist;
+            }
             self.pos = self.target;
             self.docked_at = self.target_island_id;
             self.docked_at
         } else {
+            if let Some(cargo) = self.cargo {
+                let _ = cargo;
+                self.cargo_distance_accrued += step;
+            }
             self.pos += to_target.normalize() * step;
             None
         }

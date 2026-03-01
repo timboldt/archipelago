@@ -112,6 +112,7 @@ impl World {
 
             {
                 let island = &mut self.islands[island_id];
+                island.mark_seen(self.tick);
 
                 for &ship_idx in ship_indices {
                     self.ships[ship_idx].begin_dock_tick(&self.planning_tuning);
@@ -128,7 +129,13 @@ impl World {
                 island.recompute_local_prices(self.tick);
 
                 for &ship_idx in ship_indices {
-                    let _ = self.ships[ship_idx].trade_load_if_empty(island);
+                    let _ = self.ships[ship_idx].trade_load_if_empty(
+                        island_id,
+                        &island_positions,
+                        self.tick,
+                        &self.planning_tuning,
+                        island,
+                    );
                 }
 
                 for &ship_idx in ship_indices {

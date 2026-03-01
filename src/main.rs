@@ -9,7 +9,7 @@ use world::{World, WORLD_SIZE};
 
 #[macroquad::main("Archipelago")]
 async fn main() {
-    const NUM_ISLANDS: usize = 20;
+    const NUM_ISLANDS: usize = 30;
     const NUM_SHIPS: usize = 100;
 
     const CONFIDENCE_DECAY_K: f32 = 0.003;
@@ -22,6 +22,9 @@ async fn main() {
     const CONGESTION_PENALTY: f32 = 8.0;
     const CONGESTION_EXPONENT: f32 = 1.20;
     const ROUTE_CONGESTION_DECAY: f32 = 0.94;
+    const TRANSPORT_COST_PER_DISTANCE: f32 = 0.00012;
+    const ISLAND_NEGLECT_BONUS_PER_TICK: f32 = 0.008;
+    const ISLAND_NEGLECT_BONUS_CAP: f32 = 22.0;
     const SPECULATION_STEP: f32 = 0.04;
 
     let mut planning_tuning = PlanningTuning {
@@ -35,6 +38,9 @@ async fn main() {
         congestion_penalty: CONGESTION_PENALTY,
         congestion_exponent: CONGESTION_EXPONENT,
         route_congestion_decay: ROUTE_CONGESTION_DECAY,
+        transport_cost_per_distance: TRANSPORT_COST_PER_DISTANCE,
+        island_neglect_bonus_per_tick: ISLAND_NEGLECT_BONUS_PER_TICK,
+        island_neglect_bonus_cap: ISLAND_NEGLECT_BONUS_CAP,
     };
 
     let mut world = World::new(NUM_ISLANDS, NUM_SHIPS);
