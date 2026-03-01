@@ -18,6 +18,9 @@ const MIN_POPULATION: f32 = 8.0;
 const POPULATION_GROWTH_RATE: f32 = 0.07;
 const POPULATION_STARVATION_RATE: f32 = 0.08;
 const GRAIN_PER_CAPITA_STABILITY: f32 = 0.07;
+const POPULATION_FLOOR_EPSILON: f32 = 0.05;
+const GRAIN_SURVIVAL_PRODUCTION_FLOOR: f32 = 1.8;
+const SURVIVAL_NON_GRAIN_TO_GRAIN_RATIO: f32 = 0.55;
 const TOOL_FABRICATION_BASE_RATE: f32 = 0.28;
 const GRAIN_EXTRACTION_BONUS: f32 = 1.35;
 const PER_CAPITA_CASH_GENERATION: f32 = 0.22;
@@ -153,10 +156,17 @@ impl Island {
     pub fn produce_consume_and_price(&mut self, dt: f32, tick: u64) {
         let grain_idx = Resource::Grain.idx();
         let grain_stability_target = self.population * GRAIN_PER_CAPITA_STABILITY;
-        if self.inventory[grain_idx] > grain_stability_target {
-            self.population += self.population * POPULATION_GROWTH_RATE * dt;
-        } else {
-            self.population -= self.population * POPULATION_STARVATION_RATE * dt;
+        let grain_balance =
+            (self.inventory[grain_idx] - grain_stability_target) / (grain_stability_target + 1.0);
+        let smooth_balance = grain_balance / (1.0 + grain_balance.abs());
+        let growth_component = smooth_balance.max(0.0) * POPULATION_GROWTH_RATE;
+        let starvation_component = (-smooth_balance).max(0.0) * POPULATION_STARVATION_RATE;
+        self.population += self.population * (growth_component - starvation_component) * dt;
+
+        if self.population <= MIN_POPULATION + POPULATION_FLOOR_EPSILON
+            && self.inventory[grain_idx] < grain_stability_target
+        {
+            self.reset_survival_focus();
         }
         self.population = self.population.max(MIN_POPULATION);
 
@@ -214,6 +224,19 @@ impl Island {
         }
 
         self.recompute_local_prices(tick);
+    }
+
+    fn reset_survival_focus(&mut self) {
+        let grain_idx = Resource::Grain.idx();
+        let timber_idx = Resource::Timber.idx();
+        let iron_idx = Resource::Iron.idx();
+
+        self.production_rates[grain_idx] =
+            self.production_rates[grain_idx].max(GRAIN_SURVIVAL_PRODUCTION_FLOOR);
+
+        let non_grain_ceiling = self.production_rates[grain_idx] * SURVIVAL_NON_GRAIN_TO_GRAIN_RATIO;
+        self.production_rates[timber_idx] = self.production_rates[timber_idx].min(non_grain_ceiling);
+        self.production_rates[iron_idx] = self.production_rates[iron_idx].min(non_grain_ceiling);
     }
 
     pub fn recompute_local_prices(&mut self, tick: u64) {

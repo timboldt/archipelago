@@ -46,10 +46,11 @@ cargo +nightly fmt
 - **Fleet HUD:** The panel also shows the current ship count.
 - **Resources:** Grain, Timber, Iron, Tools.
 - **Prices:** Island-local with a damped scarcity curve (log-shaped pressure) to avoid extreme low-inventory spikes.
-- **Population engine:** Islands now track `population`; grain abundance supports growth while grain scarcity causes faster shrinkage, creating endogenous demand pressure.
+- **Population engine:** Islands now track `population` with a smooth (non-binary) grain-balance response curve; grain abundance supports growth while scarcity increases shrink pressure gradually.
 - **Production dynamics:** Tier-1 goods (Grain, Timber, Iron) are labor-driven and scale with population (plus logistic damping), so larger islands produce and consume more.
 - **Tier-2 industry:** Tools are manufactured (not passively extracted) by converting Timber + Iron, scaled by island `infrastructure_level`, creating potential industrial hubs.
 - **Comparative advantage:** Islands are now initialized with partial resource scarcity (including forced-zero extraction in some resources) and a boosted focus resource, creating stronger specialization and trade dependency.
+- **Survival safety net:** If an island falls to minimum population while starving, it automatically re-prioritizes grain extraction to restart its local economy.
 - **Tools as multiplier:** Tool stock boosts raw extraction productivity up to a cap, creating industrial demand for tools beyond pure arbitrage.
 - **Island capital:** Islands now carry finite `cash`; they can only buy from ships up to affordability, and earn cash when ships purchase local inventory.
 - **Liquidity stabilization:** Islands also generate modest endogenous cash from population activity and industrial throughput to avoid system-wide insolvency cascades.
