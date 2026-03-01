@@ -129,17 +129,15 @@ impl World {
 
         let island_positions: Vec<Vec2> = self.islands.iter().map(|island| island.pos).collect();
         let mut departure_orders: Vec<(usize, usize)> = Vec::new();
+        let mut outbound_recent_departures_by_island = self.recent_route_departures.clone();
 
+        // Phase 1: execute sell/buy actions without cross-island ledger mutation.
         for (island_id, ship_indices) in ships_by_island.iter().enumerate() {
             if ship_indices.is_empty() {
                 continue;
             }
 
-            let mut outbound_recent_departures = self
-                .recent_route_departures
-                .get(island_id)
-                .cloned()
-                .unwrap_or_else(|| vec![0.0; self.islands.len()]);
+            let outbound_recent_departures = &outbound_recent_departures_by_island[island_id];
 
             {
                 let island = &mut self.islands[island_id];
@@ -153,7 +151,7 @@ impl World {
                         island_positions: &island_positions,
                         current_tick: self.tick,
                         tuning: &ship_tuning,
-                        outbound_recent_departures: &outbound_recent_departures,
+                        outbound_recent_departures,
                     };
                     let barter_action = self.ships[ship_idx].trade_barter_if_carrying(
                         island_id,
@@ -186,49 +184,85 @@ impl World {
                         island_positions: &island_positions,
                         current_tick: self.tick,
                         tuning: &ship_tuning,
-                        outbound_recent_departures: &outbound_recent_departures,
+                        outbound_recent_departures,
                     };
                     let _ =
                         self.ships[ship_idx].trade_load_if_empty(island, exclude, &load_context);
                 }
+            }
+        }
 
+        // Phase 2: merge ship ledgers into each island buffer in parallel.
+        let merged_island_ledgers = ships_by_island
+            .par_iter()
+            .enumerate()
+            .map(|(island_id, ship_indices)| {
+                if ship_indices.is_empty() {
+                    return None;
+                }
+
+                let mut island_ledger_buffer = self.islands[island_id].ledger.clone();
                 for &ship_idx in ship_indices {
                     if sold_this_tick[ship_idx] {
                         continue;
                     }
-                    let ship_tuning = self.ships[ship_idx].effective_tuning(&self.planning_tuning);
-                    self.ships[ship_idx].sync_ledgers_with_island(island);
-                    if let Some(target_island_id) = self.ships[ship_idx].plan_next_island(
-                        island_id,
-                        &island_positions,
-                        self.tick,
-                        &ship_tuning,
-                        &outbound_recent_departures,
-                    ) {
-                        if target_island_id != island_id {
-                            departure_orders.push((ship_idx, target_island_id));
-                            if let Some(slot) = outbound_recent_departures.get_mut(target_island_id)
-                            {
-                                *slot += 1.0;
-                            }
-                            if island_id
-                                < self.route_departure_history[self.route_history_cursor].len()
-                                && target_island_id
-                                    < self.route_departure_history[self.route_history_cursor]
-                                        [island_id]
-                                        .len()
-                            {
-                                let slot = &mut self.route_departure_history
-                                    [self.route_history_cursor][island_id][target_island_id];
-                                *slot = slot.saturating_add(1);
-                            }
+                    self.ships[ship_idx]
+                        .contribute_ledger_to_island_buffer(island_id, &mut island_ledger_buffer);
+                }
+
+                Some(island_ledger_buffer)
+            })
+            .collect::<Vec<_>>();
+
+        for (island_id, maybe_merged_ledger) in merged_island_ledgers.into_iter().enumerate() {
+            if let Some(merged_ledger) = maybe_merged_ledger {
+                self.islands[island_id].ledger = merged_ledger;
+            }
+        }
+
+        // Phase 3: use the merged island ledger snapshot for planning, then stage departures.
+        for (island_id, ship_indices) in ships_by_island.iter().enumerate() {
+            if ship_indices.is_empty() {
+                continue;
+            }
+
+            let island_ledger_snapshot = self.islands[island_id].ledger.clone();
+            let outbound_recent_departures = &mut outbound_recent_departures_by_island[island_id];
+
+            for &ship_idx in ship_indices {
+                if sold_this_tick[ship_idx] {
+                    continue;
+                }
+                let ship_tuning = self.ships[ship_idx].effective_tuning(&self.planning_tuning);
+                self.ships[ship_idx].sync_ledger_from_snapshot(&island_ledger_snapshot);
+                if let Some(target_island_id) = self.ships[ship_idx].plan_next_island(
+                    island_id,
+                    &island_positions,
+                    self.tick,
+                    &ship_tuning,
+                    outbound_recent_departures,
+                ) {
+                    if target_island_id != island_id {
+                        departure_orders.push((ship_idx, target_island_id));
+                        if let Some(slot) = outbound_recent_departures.get_mut(target_island_id) {
+                            *slot += 1.0;
+                        }
+                        if island_id < self.route_departure_history[self.route_history_cursor].len()
+                            && target_island_id
+                                < self.route_departure_history[self.route_history_cursor][island_id]
+                                    .len()
+                        {
+                            let slot = &mut self.route_departure_history[self.route_history_cursor]
+                                [island_id][target_island_id];
+                            *slot = slot.saturating_add(1);
                         }
                     }
                 }
             }
 
             if island_id < self.recent_route_departures.len() {
-                self.recent_route_departures[island_id] = outbound_recent_departures;
+                self.recent_route_departures[island_id] =
+                    outbound_recent_departures_by_island[island_id].clone();
             }
         }
 
@@ -360,7 +394,13 @@ impl World {
             18.0,
             WHITE,
         );
-        draw_text(&carry_cost_text, panel_x + 10.0, panel_y + 208.0, 18.0, WHITE);
+        draw_text(
+            &carry_cost_text,
+            panel_x + 10.0,
+            panel_y + 208.0,
+            18.0,
+            WHITE,
+        );
         draw_text(
             &ship_count_text,
             panel_x + 10.0,

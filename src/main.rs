@@ -10,7 +10,7 @@ use world::{World, WORLD_SIZE};
 #[macroquad::main("Archipelago")]
 async fn main() {
     const NUM_ISLANDS: usize = 30;
-    const NUM_SHIPS: usize = 100;
+    const NUM_SHIPS: usize = 1000;
 
     const CONFIDENCE_DECAY_K: f32 = 0.003;
     const SPECULATION_FLOOR: f32 = 0.40;

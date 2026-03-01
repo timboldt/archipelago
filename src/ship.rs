@@ -534,9 +534,43 @@ impl Ship {
         self.last_dock_action
     }
 
-    pub fn sync_ledgers_with_island(&mut self, island: &mut Island) {
-        island.merge_ledger(&self.ledger);
-        island.copy_ledger_to_ship(&mut self.ledger);
+    pub fn sync_ledger_from_snapshot(&mut self, island_ledger_snapshot: &PriceLedger) {
+        let len = self.ledger.len().min(island_ledger_snapshot.len());
+        for (i, ship_entry) in self.ledger.iter_mut().enumerate().take(len) {
+            if island_ledger_snapshot[i].tick_updated >= ship_entry.tick_updated {
+                ship_entry.prices = island_ledger_snapshot[i].prices;
+                ship_entry.inventories = island_ledger_snapshot[i].inventories;
+                ship_entry.cash = island_ledger_snapshot[i].cash;
+                ship_entry.infrastructure_level = island_ledger_snapshot[i].infrastructure_level;
+                ship_entry.tick_updated = island_ledger_snapshot[i].tick_updated;
+            }
+            if island_ledger_snapshot[i].last_seen_tick >= ship_entry.last_seen_tick {
+                ship_entry.last_seen_tick = island_ledger_snapshot[i].last_seen_tick;
+            }
+        }
+    }
+
+    pub fn contribute_ledger_to_island_buffer(
+        &self,
+        island_id: usize,
+        island_ledger_buffer: &mut PriceLedger,
+    ) {
+        let len = island_ledger_buffer.len().min(self.ledger.len());
+        for (i, incoming_entry) in self.ledger.iter().copied().enumerate().take(len) {
+            if i == island_id {
+                continue;
+            }
+            if incoming_entry.tick_updated > island_ledger_buffer[i].tick_updated {
+                island_ledger_buffer[i].prices = incoming_entry.prices;
+                island_ledger_buffer[i].inventories = incoming_entry.inventories;
+                island_ledger_buffer[i].cash = incoming_entry.cash;
+                island_ledger_buffer[i].infrastructure_level = incoming_entry.infrastructure_level;
+                island_ledger_buffer[i].tick_updated = incoming_entry.tick_updated;
+            }
+            if incoming_entry.last_seen_tick > island_ledger_buffer[i].last_seen_tick {
+                island_ledger_buffer[i].last_seen_tick = incoming_entry.last_seen_tick;
+            }
+        }
     }
 
     pub fn plan_next_island(
@@ -852,8 +886,10 @@ impl Ship {
 
         let expected_profit = real_expected_profit * confidence;
         let fuel_cost = distance * context.tuning.transport_cost_per_distance;
-        let capital_carry_cost =
-            buy_price * effective_lot_size * transit_time * context.tuning.capital_carry_cost_per_time;
+        let capital_carry_cost = buy_price
+            * effective_lot_size
+            * transit_time
+            * context.tuning.capital_carry_cost_per_time;
 
         let data_age = context
             .current_tick
@@ -873,16 +909,15 @@ impl Ship {
 
         let industrial_bonus = if resource == Resource::Iron || resource == Resource::Timber {
             let infra_excess =
-                (self.ledger[target_id].infrastructure_level - INDUSTRIAL_INFRA_THRESHOLD)
-                    .max(0.0);
+                (self.ledger[target_id].infrastructure_level - INDUSTRIAL_INFRA_THRESHOLD).max(0.0);
             (infra_excess * INDUSTRIAL_INPUT_BONUS_PER_INFRA).min(INDUSTRIAL_INPUT_BONUS_CAP)
         } else {
             0.0
         };
 
-        let utility = expected_profit - fuel_cost - capital_carry_cost
-            + neglect_bonus + industrial_bonus
-            - broke_penalty;
+        let utility =
+            expected_profit - fuel_cost - capital_carry_cost + neglect_bonus + industrial_bonus
+                - broke_penalty;
 
         (utility, confidence)
     }

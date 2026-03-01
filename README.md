@@ -13,8 +13,8 @@ The project currently implements a working simulation scaffold with a phased wor
 	- unload cargo (sell)
 	- reprice island market
 	- load cargo (buy)
-	- sync ship/island ledgers
-	- plan departure target
+	- merge ship gossip into island ledgers in a parallel buffered phase
+	- plan departure target from a stable merged island-ledger snapshot
 
 At startup, ships begin docked and load cargo before their first departure.
 
@@ -69,7 +69,7 @@ cargo +nightly fmt
 - **Transport cost:** Cargo accrues freight cost while traveling; planning accounts for projected freight and realized P&L applies a capped freight deduction.
 - **Pair-based load selection:** Empty ships score full `(local resource -> destination island)` pairs and buy the resource from the best pair, rather than picking the cheapest local good first.
 - **Anti-roundtrip guard:** A ship will not immediately reload the same resource it just sold in the same dock cycle.
-- **Information flow:** Price ledgers are merged only during ship-island docking interactions.
+- **Information flow:** Price ledgers are merged only during ship-island docking interactions, with a dedicated parallel per-island buffered merge and stable snapshot reads so island world-view does not shift mid-tick due to ship-processing order.
 - **Planning:** Route selection uses an expected-value utility (`(expected unit margin × lot size × confidence) - fuel cost`) with confidence decay from data staleness + transit latency, plus probabilistic speculation for route diversity.
 - **Capital carry cost:** Utility now includes a transit-time capital lock-up penalty and high-price risk attenuation, reducing over-selection of expensive cargo when long-haul uncertainty is high.
 - **Liquidity-aware planning:** Ship ledgers now gossip destination `cash`, and route utility caps expected revenue by known market depth so traders avoid chasing phantom high prices at bankrupt islands.

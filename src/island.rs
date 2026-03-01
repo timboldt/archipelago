@@ -237,11 +237,9 @@ impl Island {
             TARGET_TOOLS_PER_1K_POP
         };
         let tool_shortfall_ratio =
-            ((TARGET_TOOLS_PER_1K_POP - local_tools_per_1k_pop) / TARGET_TOOLS_PER_1K_POP)
-                .max(0.0);
-        let adaptive_tool_boost =
-            (1.0 + tool_shortfall_ratio * TOOL_FABRICATOR_ADAPTIVE_GAIN)
-                .clamp(1.0, TOOL_FABRICATOR_ADAPTIVE_CAP);
+            ((TARGET_TOOLS_PER_1K_POP - local_tools_per_1k_pop) / TARGET_TOOLS_PER_1K_POP).max(0.0);
+        let adaptive_tool_boost = (1.0 + tool_shortfall_ratio * TOOL_FABRICATOR_ADAPTIVE_GAIN)
+            .clamp(1.0, TOOL_FABRICATOR_ADAPTIVE_CAP);
 
         let industrial_rate = TOOL_FABRICATION_BASE_RATE
             * self.infrastructure_level
@@ -263,9 +261,9 @@ impl Island {
             * dt;
         self.cash += local_economic_income.max(0.0);
 
-        let operating_cost =
-            (self.population * POPULATION_CASH_UPKEEP + self.infrastructure_level * INFRASTRUCTURE_CASH_UPKEEP)
-                * dt;
+        let operating_cost = (self.population * POPULATION_CASH_UPKEEP
+            + self.infrastructure_level * INFRASTRUCTURE_CASH_UPKEEP)
+            * dt;
         self.cash = (self.cash - operating_cost).max(0.0);
 
         if self.cash > CAPITAL_INVESTMENT_THRESHOLD {
@@ -362,41 +360,6 @@ impl Island {
 
     pub fn ask_price(&self, resource: Resource) -> f32 {
         self.local_prices[resource.idx()] * ASK_PRICE_MULTIPLIER
-    }
-
-    pub fn merge_ledger(&mut self, incoming: &PriceLedger) {
-        let len = self.ledger.len().min(incoming.len());
-        for (i, incoming_entry) in incoming.iter().copied().enumerate().take(len) {
-            if i == self.id {
-                continue;
-            }
-            if incoming_entry.tick_updated > self.ledger[i].tick_updated {
-                self.ledger[i].prices = incoming_entry.prices;
-                self.ledger[i].inventories = incoming_entry.inventories;
-                self.ledger[i].cash = incoming_entry.cash;
-                self.ledger[i].infrastructure_level = incoming_entry.infrastructure_level;
-                self.ledger[i].tick_updated = incoming_entry.tick_updated;
-            }
-            if incoming_entry.last_seen_tick > self.ledger[i].last_seen_tick {
-                self.ledger[i].last_seen_tick = incoming_entry.last_seen_tick;
-            }
-        }
-    }
-
-    pub fn copy_ledger_to_ship(&self, ship_ledger: &mut PriceLedger) {
-        let len = ship_ledger.len().min(self.ledger.len());
-        for (i, ship_entry) in ship_ledger.iter_mut().enumerate().take(len) {
-            if self.ledger[i].tick_updated >= ship_entry.tick_updated {
-                ship_entry.prices = self.ledger[i].prices;
-                ship_entry.inventories = self.ledger[i].inventories;
-                ship_entry.cash = self.ledger[i].cash;
-                ship_entry.infrastructure_level = self.ledger[i].infrastructure_level;
-                ship_entry.tick_updated = self.ledger[i].tick_updated;
-            }
-            if self.ledger[i].last_seen_tick >= ship_entry.last_seen_tick {
-                ship_entry.last_seen_tick = self.ledger[i].last_seen_tick;
-            }
-        }
     }
 
     pub fn draw(&self, world_units_per_pixel: f32) {
