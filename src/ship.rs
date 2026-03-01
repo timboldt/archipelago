@@ -3,8 +3,8 @@ use macroquad::prelude::*;
 use strum::IntoEnumIterator;
 
 use crate::island::{
-    ASK_PRICE_MULTIPLIER, BASE_COSTS, BID_PRICE_MULTIPLIER, Island, PriceEntry, PriceLedger,
-    Resource, RESOURCE_COUNT,
+    ASK_PRICE_MULTIPLIER, BASE_COSTS, BID_PRICE_MULTIPLIER, INVENTORY_CARRYING_CAPACITY, Island,
+    PriceEntry, PriceLedger, Resource, RESOURCE_COUNT,
 };
 
 const TRADE_LOT_SIZE: f32 = 16.0;
@@ -137,6 +137,7 @@ impl Ship {
             ledger: vec![
                 PriceEntry {
                     prices: [0.0; RESOURCE_COUNT],
+                    inventories: [0.0; RESOURCE_COUNT],
                     cash: 0.0,
                     tick_updated: 0,
                     last_seen_tick: 0,
@@ -695,6 +696,7 @@ impl Ship {
         }
 
         let quoted_sell_price = self.ledger[target_id].prices[resource.idx()];
+        let quoted_inventory = self.ledger[target_id].inventories[resource.idx()].max(0.0);
         let has_quoted_sell_price = quoted_sell_price.is_finite() && quoted_sell_price > 0.0;
         let median_market_price = self.median_price_for_resource(resource);
         let quoted_bid_price = quoted_sell_price * BID_PRICE_MULTIPLIER;
@@ -731,9 +733,15 @@ impl Ship {
             fallback_cash
         };
 
-        let gross_expected_revenue = expected_sell_price * lot_size.max(0.0);
+        let available_storage = (INVENTORY_CARRYING_CAPACITY - quoted_inventory).max(0.0);
+        let effective_lot_size = lot_size.max(0.0).min(available_storage);
+        if effective_lot_size <= 0.0 {
+            return (f32::NEG_INFINITY, confidence);
+        }
+
+        let gross_expected_revenue = expected_sell_price * effective_lot_size;
         let real_expected_revenue = gross_expected_revenue.min(market_depth_cash * 0.9);
-        let real_expected_profit = real_expected_revenue - (buy_price * lot_size.max(0.0));
+        let real_expected_profit = real_expected_revenue - (buy_price * effective_lot_size);
         let expected_profit = real_expected_profit * confidence;
         let fuel_cost = distance * context.tuning.transport_cost_per_distance;
 
@@ -743,7 +751,7 @@ impl Ship {
             .min(context.tuning.island_neglect_bonus_cap);
 
         let average_base_cost = BASE_COSTS.iter().copied().sum::<f32>() / RESOURCE_COUNT as f32;
-        let lot_scale = (lot_size / TRADE_LOT_SIZE).clamp(0.25, 3.0);
+        let lot_scale = (effective_lot_size / TRADE_LOT_SIZE).clamp(0.25, 3.0);
         let luxury_signal = (buy_price * lot_scale) - average_base_cost;
         let luxury_bonus = context.tuning.luxury_weight * luxury_signal;
 

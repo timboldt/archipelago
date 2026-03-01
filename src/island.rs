@@ -7,7 +7,7 @@ pub const RESOURCE_COUNT: usize = 4;
 pub const BASE_COSTS: [f32; RESOURCE_COUNT] = [20.0, 30.0, 45.0, 70.0];
 pub const BID_PRICE_MULTIPLIER: f32 = 0.95;
 pub const ASK_PRICE_MULTIPLIER: f32 = 1.05;
-const INVENTORY_CARRYING_CAPACITY: f32 = 180.0;
+pub const INVENTORY_CARRYING_CAPACITY: f32 = 180.0;
 const INITIAL_POPULATION_MIN: f32 = 45.0;
 const INITIAL_POPULATION_MAX: f32 = 140.0;
 const INITIAL_CASH_MIN: f32 = 900.0;
@@ -60,6 +60,7 @@ pub type Inventory = [f32; RESOURCE_COUNT];
 #[derive(Clone, Copy, Debug)]
 pub struct PriceEntry {
     pub prices: [f32; RESOURCE_COUNT],
+    pub inventories: [f32; RESOURCE_COUNT],
     pub cash: f32,
     pub tick_updated: u64,
     pub last_seen_tick: u64,
@@ -142,6 +143,7 @@ impl Island {
             ledger: vec![
                 PriceEntry {
                     prices: [0.0; RESOURCE_COUNT],
+                    inventories: [0.0; RESOURCE_COUNT],
                     cash: 0.0,
                     tick_updated: 0,
                     last_seen_tick: 0,
@@ -249,6 +251,7 @@ impl Island {
         }
         if let Some(entry) = self.ledger.get_mut(self.id) {
             entry.prices = self.local_prices;
+            entry.inventories = self.inventory;
             entry.cash = self.cash;
             entry.tick_updated = tick;
         }
@@ -314,6 +317,7 @@ impl Island {
             }
             if incoming_entry.tick_updated > self.ledger[i].tick_updated {
                 self.ledger[i].prices = incoming_entry.prices;
+                self.ledger[i].inventories = incoming_entry.inventories;
                 self.ledger[i].cash = incoming_entry.cash;
                 self.ledger[i].tick_updated = incoming_entry.tick_updated;
             }
@@ -328,6 +332,7 @@ impl Island {
         for (i, ship_entry) in ship_ledger.iter_mut().enumerate().take(len) {
             if self.ledger[i].tick_updated >= ship_entry.tick_updated {
                 ship_entry.prices = self.ledger[i].prices;
+                ship_entry.inventories = self.ledger[i].inventories;
                 ship_entry.cash = self.ledger[i].cash;
                 ship_entry.tick_updated = self.ledger[i].tick_updated;
             }
