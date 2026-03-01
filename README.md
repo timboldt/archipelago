@@ -16,6 +16,8 @@ The project currently implements a working simulation scaffold with a phased wor
 	- sync ship/island ledgers
 	- plan departure target
 
+At startup, ships begin docked and load cargo before their first departure.
+
 Each ship can perform at most one dock action per tick (`sell` or `buy`, not both).
 
 ## Quick Start
@@ -39,11 +41,15 @@ cargo +nightly fmt
 - **Island visuals:** Islands are drawn as compact 4-bar charts for Grain, Timber, Iron, and Tools abundance.
 - **Chart readability:** Island chart dimensions are scaled from current view units-per-pixel so bars stay legible across zoom/viewport changes.
 - **UI legend:** A fixed top-left legend maps resource colors (and empty ships) for quick visual decoding.
+- **Tuning HUD:** The same panel shows the live `speculation_floor` value.
 - **Resources:** Grain, Timber, Iron, Tools.
 - **Prices:** Island-local, inventory-driven (`base_cost / (inventory + 1.0)`).
 - **Information flow:** Price ledgers are merged only during ship-island docking interactions.
 - **Planning:** Route selection combines utility with confidence decay based on data staleness + transit time, and includes probabilistic speculation to break deterministic route loops.
+- **Ship learning:** Each ship maintains a decaying destination memory updated by realized trade margins, and this memory biases future route utility.
 - **Dock cadence:** Ships that sell on a tick stay docked for at least that tick (no immediate departure while empty), then can reload and depart on a following tick.
+- **Tuning controls:** `main.rs` exposes planning/speculation/learning constants (`confidence_decay_k`, `speculation_floor`, `speculation_staleness_scale`, `speculation_uncertainty_bonus`, `learning_rate`, `learning_decay`, `learning_weight`) and applies them via `World::set_planning_tuning(...)`.
+- **Live tuning:** Press `[` and `]` during runtime to decrease/increase `speculation_floor`.
 
 ## Tech Stack (Current)
 
@@ -54,6 +60,5 @@ cargo +nightly fmt
 
 ## Near-Term Roadmap
 
-- Add confidence decay using data staleness and transit time.
 - Improve trade sizing and utility scoring.
 - Introduce parallel updates (`rayon`) for island and ship phases.

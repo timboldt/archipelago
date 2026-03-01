@@ -2,13 +2,14 @@ use ::rand::Rng;
 use macroquad::prelude::*;
 
 use crate::island::Island;
-use crate::ship::{DockAction, Ship};
+use crate::ship::{DockAction, PlanningTuning, Ship};
 
 pub const WORLD_SIZE: f32 = 5000.0;
 
 pub struct World {
     pub islands: Vec<Island>,
     pub ships: Vec<Ship>,
+    planning_tuning: PlanningTuning,
     tick: u64,
 }
 
@@ -40,21 +41,17 @@ impl World {
             })
             .collect();
 
-        let mut world = Self {
+        // Ships start docked and will load/plan before first departure.
+        Self {
             islands,
             ships,
+            planning_tuning: PlanningTuning::default(),
             tick: 0,
-        };
-        // Give each ship an initial destination.
-        for i in 0..world.ships.len() {
-            let start_id = i % world.islands.len();
-            let mut idx = rng.gen_range(0..world.islands.len());
-            if idx == start_id {
-                idx = (idx + 1) % world.islands.len();
-            }
-            world.ships[i].set_target(idx, world.islands[idx].pos);
         }
-        world
+    }
+
+    pub fn set_planning_tuning(&mut self, planning_tuning: PlanningTuning) {
+        self.planning_tuning = planning_tuning;
     }
 
     pub fn update(&mut self, dt: f32) {
@@ -99,8 +96,12 @@ impl World {
                 let island = &mut self.islands[island_id];
 
                 for &ship_idx in ship_indices {
-                    self.ships[ship_idx].begin_dock_tick();
-                    let unload_action = self.ships[ship_idx].trade_unload_if_carrying(island);
+                    self.ships[ship_idx].begin_dock_tick(&self.planning_tuning);
+                    let unload_action = self.ships[ship_idx].trade_unload_if_carrying(
+                        island_id,
+                        island,
+                        &self.planning_tuning,
+                    );
                     if unload_action == DockAction::Sold {
                         sold_this_tick[ship_idx] = true;
                     }
@@ -121,6 +122,7 @@ impl World {
                         island_id,
                         &island_positions,
                         self.tick,
+                        &self.planning_tuning,
                     ) {
                         if target_island_id != island_id {
                             departure_orders.push((ship_idx, target_island_id));
@@ -153,7 +155,7 @@ impl World {
         let panel_x = 14.0;
         let panel_y = 14.0;
         let panel_w = 180.0;
-        let panel_h = 124.0;
+        let panel_h = 146.0;
 
         draw_rectangle(
             panel_x,
@@ -179,5 +181,14 @@ impl World {
             draw_rectangle_lines(panel_x + 10.0, y - 10.0, 10.0, 10.0, 1.0, GRAY);
             draw_text(label, panel_x + 28.0, y, 18.0, WHITE);
         }
+
+        let tuning_text = format!("Spec floor: {:.2}", self.planning_tuning.speculation_floor);
+        draw_text(
+            &tuning_text,
+            panel_x + 10.0,
+            panel_y + panel_h - 10.0,
+            18.0,
+            WHITE,
+        );
     }
 }

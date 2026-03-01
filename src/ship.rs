@@ -5,10 +5,37 @@ use strum::IntoEnumIterator;
 use crate::island::{Island, PriceEntry, PriceLedger, Resource, RESOURCE_COUNT};
 
 const TRADE_LOT_SIZE: f32 = 16.0;
-const CONFIDENCE_DECAY_K: f32 = 0.003;
-const SPECULATION_FLOOR: f32 = 0.08;
-const SPECULATION_STALENESS_SCALE: f32 = 0.35;
-const SPECULATION_UNCERTAINTY_BONUS: f32 = 8.0;
+
+#[derive(Clone, Copy, Debug)]
+pub struct PlanningTuning {
+    pub confidence_decay_k: f32,
+    pub speculation_floor: f32,
+    pub speculation_staleness_scale: f32,
+    pub speculation_uncertainty_bonus: f32,
+    pub learning_rate: f32,
+    pub learning_decay: f32,
+    pub learning_weight: f32,
+}
+
+impl Default for PlanningTuning {
+    fn default() -> Self {
+        Self {
+            confidence_decay_k: 0.003,
+            speculation_floor: 0.08,
+            speculation_staleness_scale: 0.35,
+            speculation_uncertainty_bonus: 8.0,
+            learning_rate: 0.14,
+            learning_decay: 0.98,
+            learning_weight: 12.0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PurchaseRecord {
+    unit_price: f32,
+    resource: Resource,
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct Cargo {
@@ -32,6 +59,8 @@ pub struct Ship {
     pub cargo: Option<Cargo>,
     pub cash: f32,
     pub ledger: PriceLedger,
+    route_memory: Vec<f32>,
+    last_purchase: Option<PurchaseRecord>,
     last_dock_action: DockAction,
 }
 
@@ -52,6 +81,8 @@ impl Ship {
                 };
                 num_islands
             ],
+            route_memory: vec![0.0; num_islands],
+            last_purchase: None,
             last_dock_action: DockAction::None,
         }
     }
@@ -66,17 +97,40 @@ impl Ship {
         self.docked_at
     }
 
-    pub fn begin_dock_tick(&mut self) {
+    pub fn begin_dock_tick(&mut self, tuning: &PlanningTuning) {
         self.last_dock_action = DockAction::None;
+        let decay = tuning.learning_decay.clamp(0.0, 1.0);
+        for score in &mut self.route_memory {
+            *score *= decay;
+        }
     }
 
-    pub fn trade_unload_if_carrying(&mut self, island: &mut Island) -> DockAction {
+    pub fn trade_unload_if_carrying(
+        &mut self,
+        island_id: usize,
+        island: &mut Island,
+        tuning: &PlanningTuning,
+    ) -> DockAction {
         if self.last_dock_action != DockAction::None {
             return self.last_dock_action;
         }
         if let Some(cargo) = self.cargo.take() {
             let revenue = island.sell_to_island(cargo.resource, cargo.amount);
             self.cash += revenue;
+
+            if let Some(purchase) = self.last_purchase.take() {
+                if purchase.resource == cargo.resource
+                    && cargo.amount > 0.0
+                    && island_id < self.route_memory.len()
+                {
+                    let sale_unit_price = revenue / cargo.amount;
+                    let normalized_margin =
+                        (sale_unit_price - purchase.unit_price) / (purchase.unit_price + 1.0);
+                    self.route_memory[island_id] += normalized_margin * tuning.learning_rate;
+                    self.route_memory[island_id] = self.route_memory[island_id].clamp(-1.5, 1.5);
+                }
+            }
+
             self.last_dock_action = DockAction::Sold;
         }
         self.last_dock_action
@@ -123,6 +177,10 @@ impl Ship {
             resource: chosen_resource,
             amount: filled,
         });
+        self.last_purchase = Some(PurchaseRecord {
+            unit_price: lowest_price,
+            resource: chosen_resource,
+        });
         self.last_dock_action = DockAction::Bought;
         self.last_dock_action
     }
@@ -137,6 +195,7 @@ impl Ship {
         current_island_id: usize,
         island_positions: &[Vec2],
         current_tick: u64,
+        tuning: &PlanningTuning,
     ) -> Option<usize> {
         let mut candidates: Vec<(usize, f32, f32)> = Vec::new();
         let mut best_target = None;
@@ -163,7 +222,7 @@ impl Ship {
             let distance_cost = distance * 0.01;
             let transit_time = distance / self.speed.max(1.0);
             let data_age = current_tick.saturating_sub(self.ledger[target_id].tick_updated) as f32;
-            let confidence = (-CONFIDENCE_DECAY_K * (data_age + transit_time))
+            let confidence = (-tuning.confidence_decay_k * (data_age + transit_time))
                 .exp()
                 .clamp(0.05, 1.0);
 
@@ -180,6 +239,10 @@ impl Ship {
                 -(target_best_buy_price * confidence * 2.0) - distance_cost
             };
 
+            let learned_bias =
+                self.route_memory.get(target_id).copied().unwrap_or(0.0) * tuning.learning_weight;
+            let utility = utility + learned_bias;
+
             candidates.push((target_id, utility, confidence));
 
             if utility > best_utility {
@@ -193,9 +256,9 @@ impl Ship {
             return best_target;
         }
 
-        let speculation_chance = (SPECULATION_FLOOR
-            + (1.0 - best_confidence) * SPECULATION_STALENESS_SCALE)
-            .clamp(SPECULATION_FLOOR, 0.60);
+        let speculation_chance = (tuning.speculation_floor
+            + (1.0 - best_confidence) * tuning.speculation_staleness_scale)
+            .clamp(tuning.speculation_floor, 0.60);
 
         let mut rng = ::rand::thread_rng();
         if rng.gen_bool(speculation_chance as f64) {
@@ -204,7 +267,8 @@ impl Ship {
 
             for (target_id, utility, confidence) in candidates {
                 let noise = rng.gen_range(-2.0..2.0);
-                let score = utility + (1.0 - confidence) * SPECULATION_UNCERTAINTY_BONUS + noise;
+                let score =
+                    utility + (1.0 - confidence) * tuning.speculation_uncertainty_bonus + noise;
                 if score > speculative_score {
                     speculative_score = score;
                     speculative_target = Some(target_id);
