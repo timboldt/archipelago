@@ -1,10 +1,13 @@
 use ::rand::Rng;
 use macroquad::prelude::*;
+use strum::IntoEnumIterator;
+use strum_macros::EnumIter;
 
 pub const RESOURCE_COUNT: usize = 4;
 pub const BASE_COSTS: [f32; RESOURCE_COUNT] = [20.0, 30.0, 45.0, 70.0];
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, EnumIter)]
+#[repr(usize)]
 pub enum Resource {
     Grain,
     Timber,
@@ -13,20 +16,8 @@ pub enum Resource {
 }
 
 impl Resource {
-    pub const ALL: [Resource; RESOURCE_COUNT] = [
-        Resource::Grain,
-        Resource::Timber,
-        Resource::Iron,
-        Resource::Tools,
-    ];
-
     pub fn idx(self) -> usize {
-        match self {
-            Resource::Grain => 0,
-            Resource::Timber => 1,
-            Resource::Iron => 2,
-            Resource::Tools => 3,
-        }
+        self as usize
     }
 }
 
@@ -57,7 +48,7 @@ impl Island {
         let mut production_rates = [0.0; RESOURCE_COUNT];
         let mut consumption_rates = [0.0; RESOURCE_COUNT];
 
-        for resource in Resource::ALL {
+        for resource in Resource::iter() {
             let index = resource.idx();
             inventory[index] = rng.gen_range(25.0..125.0);
             production_rates[index] = rng.gen_range(0.5..2.2);
@@ -84,7 +75,7 @@ impl Island {
     }
 
     pub fn produce_consume_and_price(&mut self, dt: f32, tick: u64) {
-        for resource in Resource::ALL {
+        for resource in Resource::iter() {
             let index = resource.idx();
             self.inventory[index] += self.production_rates[index] * dt;
             self.inventory[index] -= self.consumption_rates[index] * dt;
@@ -94,7 +85,7 @@ impl Island {
     }
 
     pub fn recompute_local_prices(&mut self, tick: u64) {
-        for resource in Resource::ALL {
+        for resource in Resource::iter() {
             let index = resource.idx();
             self.local_prices[index] = BASE_COSTS[index] / (self.inventory[index] + 1.0);
         }

@@ -1,4 +1,5 @@
 use macroquad::prelude::*;
+use strum::IntoEnumIterator;
 
 use crate::island::{Island, PriceEntry, PriceLedger, Resource, RESOURCE_COUNT};
 
@@ -84,19 +85,23 @@ impl Ship {
             return self.last_dock_action;
         }
 
-        let mut chosen_resource = Resource::Grain;
+        let mut chosen_resource: Option<Resource> = None;
         let mut lowest_price = f32::INFINITY;
-        for resource in Resource::ALL {
+        for resource in Resource::iter() {
             let idx = resource.idx();
             if island.local_prices[idx] < lowest_price {
                 lowest_price = island.local_prices[idx];
-                chosen_resource = resource;
+                chosen_resource = Some(resource);
             }
         }
 
         if !lowest_price.is_finite() || lowest_price <= 0.0 {
             return self.last_dock_action;
         }
+
+        let Some(chosen_resource) = chosen_resource else {
+            return self.last_dock_action;
+        };
 
         let affordable = (self.cash / lowest_price).max(0.0);
         let requested = TRADE_LOT_SIZE.min(affordable);

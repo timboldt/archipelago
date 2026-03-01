@@ -39,6 +39,7 @@ cargo test
 - **Language:** Rust (edition 2021)
 - **Visualization/Input:** `macroquad`
 - **Randomization:** `rand`
+- **Enum utilities:** `strum` + `strum_macros`
 
 ## Near-Term Roadmap
 
