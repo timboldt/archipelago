@@ -14,6 +14,9 @@ const DEFAULT_MARKET_DEPTH_FALLBACK: f32 = 600.0;
 const RECENT_BROKE_TICKS: f32 = 180.0;
 const BROKE_ISLAND_UTILITY_PENALTY: f32 = 5.5;
 const BROKE_CASH_COVERAGE_RATIO: f32 = 0.35;
+const INDUSTRIAL_INFRA_THRESHOLD: f32 = 1.5;
+const INDUSTRIAL_INPUT_BONUS_PER_INFRA: f32 = 4.0;
+const INDUSTRIAL_INPUT_BONUS_CAP: f32 = 14.0;
 
 #[derive(Clone, Copy, Debug)]
 pub struct PlanningTuning {
@@ -143,6 +146,7 @@ impl Ship {
                     prices: [0.0; RESOURCE_COUNT],
                     inventories: [0.0; RESOURCE_COUNT],
                     cash: 0.0,
+                    infrastructure_level: 0.0,
                     tick_updated: 0,
                     last_seen_tick: 0,
                 };
@@ -870,7 +874,17 @@ impl Ship {
         let luxury_signal = (buy_price * lot_scale) - average_base_cost;
         let luxury_bonus = context.tuning.luxury_weight * luxury_signal;
 
-        let utility = expected_profit - fuel_cost + neglect_bonus + luxury_bonus - broke_penalty;
+        let industrial_bonus = if resource == Resource::Iron || resource == Resource::Timber {
+            let infra_excess =
+                (self.ledger[target_id].infrastructure_level - INDUSTRIAL_INFRA_THRESHOLD)
+                    .max(0.0);
+            (infra_excess * INDUSTRIAL_INPUT_BONUS_PER_INFRA).min(INDUSTRIAL_INPUT_BONUS_CAP)
+        } else {
+            0.0
+        };
+
+        let utility = expected_profit - fuel_cost + neglect_bonus + luxury_bonus + industrial_bonus
+            - broke_penalty;
 
         (utility, confidence)
     }

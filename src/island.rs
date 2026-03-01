@@ -4,7 +4,7 @@ use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
 pub const RESOURCE_COUNT: usize = 4;
-pub const BASE_COSTS: [f32; RESOURCE_COUNT] = [20.0, 30.0, 45.0, 70.0];
+pub const BASE_COSTS: [f32; RESOURCE_COUNT] = [20.0, 30.0, 45.0, 120.0];
 pub const BID_PRICE_MULTIPLIER: f32 = 0.95;
 pub const ASK_PRICE_MULTIPLIER: f32 = 1.05;
 pub const INVENTORY_CARRYING_CAPACITY: f32 = 180.0;
@@ -21,13 +21,17 @@ const GRAIN_PER_CAPITA_STABILITY: f32 = 0.07;
 const POPULATION_FLOOR_EPSILON: f32 = 0.05;
 const GRAIN_SURVIVAL_PRODUCTION_FLOOR: f32 = 1.8;
 const SURVIVAL_NON_GRAIN_TO_GRAIN_RATIO: f32 = 0.55;
-const TOOL_FABRICATION_BASE_RATE: f32 = 0.28;
+const TOOL_FABRICATION_BASE_RATE: f32 = 0.45;
 const GRAIN_EXTRACTION_BONUS: f32 = 1.35;
+const TIMBER_EXTRACTION_BONUS: f32 = 1.25;
+const TOOL_IRON_PER_BATCH: f32 = 1.35;
+const TOOL_TIMBER_PER_BATCH: f32 = 1.0;
+const TOOL_OUTPUT_PER_BATCH: f32 = 2.1;
 const PER_CAPITA_CASH_GENERATION: f32 = 0.22;
 const INDUSTRIAL_CASH_GENERATION: f32 = 0.18;
 const SCARCITY_LOG_SCALE: f32 = 2.4;
 const SCARCITY_REFERENCE: f32 = 120.0;
-const SPECIALIZATION_ZERO_PROBABILITY: f32 = 0.35;
+const SPECIALIZATION_ZERO_PROBABILITY: f32 = 0.20;
 const FOCUS_PRODUCTION_BOOST: f32 = 1.9;
 const NON_FOCUS_PRODUCTION_SCALE: f32 = 0.78;
 const TOOLS_PRODUCTIVITY_CAP: f32 = 2.0;
@@ -62,6 +66,7 @@ pub struct PriceEntry {
     pub prices: [f32; RESOURCE_COUNT],
     pub inventories: [f32; RESOURCE_COUNT],
     pub cash: f32,
+    pub infrastructure_level: f32,
     pub tick_updated: u64,
     pub last_seen_tick: u64,
 }
@@ -94,21 +99,32 @@ impl Island {
             production_rates[index] = match resource {
                 Resource::Tools => 0.0,
                 Resource::Grain => rng.gen_range(0.8..2.6),
-                Resource::Timber | Resource::Iron => {
+                Resource::Timber => {
                     if rng.gen_bool(SPECIALIZATION_ZERO_PROBABILITY as f64) {
                         0.0
                     } else {
-                        rng.gen_range(0.4..2.0)
+                        rng.gen_range(0.7..2.4)
+                    }
+                }
+                Resource::Iron => {
+                    if rng.gen_bool(SPECIALIZATION_ZERO_PROBABILITY as f64) {
+                        0.0
+                    } else {
+                        rng.gen_range(0.35..1.6)
                     }
                 }
             };
-            consumption_rates[index] = rng.gen_range(0.4..1.9);
+            consumption_rates[index] = match resource {
+                Resource::Grain => rng.gen_range(0.8..2.2),
+                Resource::Tools => rng.gen_range(0.1..0.5),
+                Resource::Timber | Resource::Iron => rng.gen_range(0.05..0.4),
+            };
         }
 
         if production_rates[Resource::Timber.idx()] <= 0.0
             && production_rates[Resource::Iron.idx()] <= 0.0
         {
-            if rng.gen_bool(0.5) {
+            if rng.gen_bool(0.7) {
                 production_rates[Resource::Timber.idx()] = rng.gen_range(0.5..1.4);
             } else {
                 production_rates[Resource::Iron.idx()] = rng.gen_range(0.5..1.4);
@@ -145,6 +161,7 @@ impl Island {
                     prices: [0.0; RESOURCE_COUNT],
                     inventories: [0.0; RESOURCE_COUNT],
                     cash: 0.0,
+                    infrastructure_level: 0.0,
                     tick_updated: 0,
                     last_seen_tick: 0,
                 };
@@ -185,6 +202,8 @@ impl Island {
                     self.production_rates[index] * self.population * logistic_factor * dt;
                 if resource == Resource::Grain {
                     extraction *= GRAIN_EXTRACTION_BONUS;
+                } else if resource == Resource::Timber {
+                    extraction *= TIMBER_EXTRACTION_BONUS;
                 }
                 extraction *= tools_boost;
                 self.inventory[index] += extraction;
@@ -200,14 +219,14 @@ impl Island {
         let tools_idx = Resource::Tools.idx();
 
         let industrial_rate = TOOL_FABRICATION_BASE_RATE * self.infrastructure_level * dt;
-        let feasible_batch = self.inventory[iron_idx]
-            .min(self.inventory[timber_idx])
+        let feasible_batch = (self.inventory[iron_idx] / TOOL_IRON_PER_BATCH)
+            .min(self.inventory[timber_idx] / TOOL_TIMBER_PER_BATCH)
             .min(industrial_rate)
             .max(0.0);
         if feasible_batch > 0.0 {
-            self.inventory[iron_idx] -= feasible_batch;
-            self.inventory[timber_idx] -= feasible_batch;
-            self.inventory[tools_idx] += feasible_batch * 1.5;
+            self.inventory[iron_idx] -= feasible_batch * TOOL_IRON_PER_BATCH;
+            self.inventory[timber_idx] -= feasible_batch * TOOL_TIMBER_PER_BATCH;
+            self.inventory[tools_idx] += feasible_batch * TOOL_OUTPUT_PER_BATCH;
         }
 
         let local_economic_income = (self.population * PER_CAPITA_CASH_GENERATION
@@ -254,6 +273,7 @@ impl Island {
             entry.prices = self.local_prices;
             entry.inventories = self.inventory;
             entry.cash = self.cash;
+            entry.infrastructure_level = self.infrastructure_level;
             entry.tick_updated = tick;
         }
     }
@@ -320,6 +340,7 @@ impl Island {
                 self.ledger[i].prices = incoming_entry.prices;
                 self.ledger[i].inventories = incoming_entry.inventories;
                 self.ledger[i].cash = incoming_entry.cash;
+                self.ledger[i].infrastructure_level = incoming_entry.infrastructure_level;
                 self.ledger[i].tick_updated = incoming_entry.tick_updated;
             }
             if incoming_entry.last_seen_tick > self.ledger[i].last_seen_tick {
@@ -335,6 +356,7 @@ impl Island {
                 ship_entry.prices = self.ledger[i].prices;
                 ship_entry.inventories = self.ledger[i].inventories;
                 ship_entry.cash = self.ledger[i].cash;
+                ship_entry.infrastructure_level = self.ledger[i].infrastructure_level;
                 ship_entry.tick_updated = self.ledger[i].tick_updated;
             }
             if self.ledger[i].last_seen_tick >= ship_entry.last_seen_tick {

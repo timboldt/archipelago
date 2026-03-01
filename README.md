@@ -46,10 +46,15 @@ cargo +nightly fmt
 - **Fleet HUD:** The panel also shows the current ship count.
 - **Resources:** Grain, Timber, Iron, Tools.
 - **Prices:** Island-local with a damped scarcity curve (log-shaped pressure) to avoid extreme low-inventory spikes.
+- **Price incentives:** Tools base value is elevated (120) to better reward long-haul industrial trade.
 - **Population engine:** Islands now track `population` with a smooth (non-binary) grain-balance response curve; grain abundance supports growth while scarcity increases shrink pressure gradually.
 - **Production dynamics:** Tier-1 goods (Grain, Timber, Iron) are labor-driven and scale with population (plus logistic damping), so larger islands produce and consume more.
+- **Differentiated consumption:** Grain is the dominant population sink, Tools are moderate/durable, and Timber/Iron passive consumption is low so industrial inputs can accumulate.
 - **Tier-2 industry:** Tools are manufactured (not passively extracted) by converting Timber + Iron, scaled by island `infrastructure_level`, creating potential industrial hubs.
+- **Industrial throughput:** Tool fabrication base rate is increased (`0.45`) to reduce persistent tools scarcity.
+- **Supply-chain rebalance:** Timber extraction is now biased higher than iron extraction, and tool fabrication consumes more iron per batch while producing more tools, which helps drain iron gluts and raise tool availability.
 - **Comparative advantage:** Islands are now initialized with partial resource scarcity (including forced-zero extraction in some resources) and a boosted focus resource, creating stronger specialization and trade dependency.
+- **Specialization tuning:** Timber/Iron zero-production probability is reduced to `0.20` to preserve baseline raw-material flow while still allowing specialization.
 - **Survival safety net:** If an island falls to minimum population while starving, it automatically re-prioritizes grain extraction to restart its local economy.
 - **Tools as multiplier:** Tool stock boosts raw extraction productivity up to a cap, creating industrial demand for tools beyond pure arbitrage.
 - **Island capital:** Islands now carry finite `cash`; they can only buy from ships up to affordability, and earn cash when ships purchase local inventory.
@@ -62,6 +67,7 @@ cargo +nightly fmt
 - **Planning:** Route selection uses an expected-value utility (`(expected unit margin × lot size × confidence) - fuel cost`) with confidence decay from data staleness + transit latency, plus probabilistic speculation for route diversity.
 - **Liquidity-aware planning:** Ship ledgers now gossip destination `cash`, and route utility caps expected revenue by known market depth so traders avoid chasing phantom high prices at bankrupt islands.
 - **Storage-aware planning:** Ship ledgers also gossip inventory snapshots; utility discounts destination demand by available storage headroom so traders avoid over-delivering into saturated markets.
+- **Industrial routing bonus:** Ledgers also gossip destination infrastructure level; ships add a proportional utility bonus for delivering Iron/Timber to higher-infrastructure islands (above a threshold).
 - **Recent-broke avoidance:** Ships apply a short-lived utility penalty to destinations recently observed as cash-poor, reducing repeated revisits to liquidity-starved islands after partial unloads.
 - **Bid/ask spread:** Islands quote a spread (buy from ships at `0.95×` local, sell to ships at `1.05×` local), reducing churn loops and helping islands rebuild reserves.
 - **Barter swap-and-go:** When cash settlement is constrained, carrying ships can perform value-equivalent cargo swaps at dock (barter), allowing goods to keep flowing even during local liquidity crunches.
