@@ -62,7 +62,10 @@ cargo +nightly fmt
 - **Planning:** Route selection uses an expected-value utility (`(expected unit margin × lot size × confidence) - fuel cost`) with confidence decay from data staleness + transit latency, plus probabilistic speculation for route diversity.
 - **Liquidity-aware planning:** Ship ledgers now gossip destination `cash`, and route utility caps expected revenue by known market depth so traders avoid chasing phantom high prices at bankrupt islands.
 - **Storage-aware planning:** Ship ledgers also gossip inventory snapshots; utility discounts destination demand by available storage headroom so traders avoid over-delivering into saturated markets.
+- **Recent-broke avoidance:** Ships apply a short-lived utility penalty to destinations recently observed as cash-poor, reducing repeated revisits to liquidity-starved islands after partial unloads.
 - **Bid/ask spread:** Islands quote a spread (buy from ships at `0.95×` local, sell to ships at `1.05×` local), reducing churn loops and helping islands rebuild reserves.
+- **Barter swap-and-go:** When cash settlement is constrained, carrying ships can perform value-equivalent cargo swaps at dock (barter), allowing goods to keep flowing even during local liquidity crunches.
+- **Partial unloads:** Ships already sell whatever quantity an island can currently afford; if a sale is only partial and cargo remains, ships are now allowed to redepart in the same tick instead of waiting docked.
 - **Empty-cargo relocation:** If a ship cannot load, it still picks its next island by maximizing the same expected-value utility over candidate resource opportunities (using its local ledger prices as reference buy prices).
 - **Speculation behavior:** Speculation probability now increases further when the currently best destination is crowded, and speculative picks sample among top candidates to improve route diversity.
 - **Outlier rescue:** Each actor gossips a `last_seen_tick` estimate per island through ledgers; stale/rarely seen islands receive a capped neglect bonus during planning.

@@ -77,8 +77,7 @@ impl World {
         self.move_ships(dt);
         self.process_docked_ships();
         self.apply_ship_maintenance();
-        self.route_history_cursor =
-            (self.route_history_cursor + 1) % ROUTE_HISTORY_WINDOW_TICKS;
+        self.route_history_cursor = (self.route_history_cursor + 1) % ROUTE_HISTORY_WINDOW_TICKS;
         if self.tick.is_multiple_of(LIFECYCLE_CHECK_INTERVAL_TICKS) {
             self.evolve_fleet();
         }
@@ -91,8 +90,7 @@ impl World {
                 let stale_count = self.route_departure_history[cursor][origin_id][target_id] as f32;
                 if stale_count > 0.0 {
                     self.recent_route_departures[origin_id][target_id] =
-                        (self.recent_route_departures[origin_id][target_id] - stale_count)
-                            .max(0.0);
+                        (self.recent_route_departures[origin_id][target_id] - stale_count).max(0.0);
                     self.route_departure_history[cursor][origin_id][target_id] = 0;
                 }
             }
@@ -150,13 +148,31 @@ impl World {
                 for &ship_idx in ship_indices {
                     let ship_tuning = self.ships[ship_idx].effective_tuning(&self.planning_tuning);
                     self.ships[ship_idx].begin_dock_tick(&ship_tuning);
-                    let unload_action = self.ships[ship_idx].trade_unload_if_carrying(
+                    let load_context = LoadPlanningContext {
+                        current_island_id: island_id,
+                        island_positions: &island_positions,
+                        current_tick: self.tick,
+                        tuning: &ship_tuning,
+                        outbound_recent_departures: &outbound_recent_departures,
+                    };
+                    let barter_action = self.ships[ship_idx].trade_barter_if_carrying(
                         island_id,
                         island,
-                        &ship_tuning,
+                        &load_context,
                     );
+                    let unload_action = if barter_action == DockAction::Bartered {
+                        barter_action
+                    } else {
+                        self.ships[ship_idx].trade_unload_if_carrying(
+                            island_id,
+                            island,
+                            &ship_tuning,
+                        )
+                    };
                     if unload_action == DockAction::Sold {
-                        sold_this_tick[ship_idx] = true;
+                        // Only hold ships that fully unloaded and are now empty.
+                        // If cargo remains after a partial sale, allow immediate redeparture.
+                        sold_this_tick[ship_idx] = self.ships[ship_idx].cargo.is_none();
                     }
                 }
 
@@ -172,11 +188,8 @@ impl World {
                         tuning: &ship_tuning,
                         outbound_recent_departures: &outbound_recent_departures,
                     };
-                    let _ = self.ships[ship_idx].trade_load_if_empty(
-                        island,
-                        exclude,
-                        &load_context,
-                    );
+                    let _ =
+                        self.ships[ship_idx].trade_load_if_empty(island, exclude, &load_context);
                 }
 
                 for &ship_idx in ship_indices {
@@ -198,14 +211,15 @@ impl World {
                             {
                                 *slot += 1.0;
                             }
-                            if island_id < self.route_departure_history[self.route_history_cursor].len()
+                            if island_id
+                                < self.route_departure_history[self.route_history_cursor].len()
                                 && target_island_id
                                     < self.route_departure_history[self.route_history_cursor]
                                         [island_id]
                                         .len()
                             {
-                                let slot = &mut self.route_departure_history[self.route_history_cursor]
-                                    [island_id][target_island_id];
+                                let slot = &mut self.route_departure_history
+                                    [self.route_history_cursor][island_id][target_island_id];
                                 *slot = slot.saturating_add(1);
                             }
                         }

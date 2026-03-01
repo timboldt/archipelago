@@ -3,14 +3,17 @@ use macroquad::prelude::*;
 use strum::IntoEnumIterator;
 
 use crate::island::{
-    ASK_PRICE_MULTIPLIER, BASE_COSTS, BID_PRICE_MULTIPLIER, INVENTORY_CARRYING_CAPACITY, Island,
-    PriceEntry, PriceLedger, Resource, RESOURCE_COUNT,
+    Island, PriceEntry, PriceLedger, Resource, ASK_PRICE_MULTIPLIER, BASE_COSTS,
+    BID_PRICE_MULTIPLIER, INVENTORY_CARRYING_CAPACITY, RESOURCE_COUNT,
 };
 
 const TRADE_LOT_SIZE: f32 = 16.0;
 pub const STARTING_CASH: f32 = 200.0;
 const UNKNOWN_CASH_CONFIDENCE_SCALE: f32 = 0.70;
 const DEFAULT_MARKET_DEPTH_FALLBACK: f32 = 600.0;
+const RECENT_BROKE_TICKS: f32 = 180.0;
+const BROKE_ISLAND_UTILITY_PENALTY: f32 = 5.5;
+const BROKE_CASH_COVERAGE_RATIO: f32 = 0.35;
 
 #[derive(Clone, Copy, Debug)]
 pub struct PlanningTuning {
@@ -104,6 +107,7 @@ pub enum DockAction {
     None,
     Sold,
     Bought,
+    Bartered,
 }
 
 pub struct Ship {
@@ -158,24 +162,19 @@ impl Ship {
         let mut tuned = *base;
         tuned.confidence_decay_k =
             (tuned.confidence_decay_k * self.strategy_genes.confidence_decay_scale).max(0.0001);
-        tuned.speculation_floor =
-            (tuned.speculation_floor * self.strategy_genes.speculation_floor_scale)
-                .clamp(0.01, 0.95);
+        tuned.speculation_floor = (tuned.speculation_floor
+            * self.strategy_genes.speculation_floor_scale)
+            .clamp(0.01, 0.95);
         tuned.learning_weight =
             (tuned.learning_weight * self.strategy_genes.learning_weight_scale).max(0.0);
         tuned.transport_cost_per_distance =
-            (tuned.transport_cost_per_distance * self.strategy_genes.transport_cost_scale)
-                .max(0.0);
-        tuned.luxury_weight = (tuned.luxury_weight * self.strategy_genes.luxury_weight_scale)
-            .clamp(-2.0, 2.0);
+            (tuned.transport_cost_per_distance * self.strategy_genes.transport_cost_scale).max(0.0);
+        tuned.luxury_weight =
+            (tuned.luxury_weight * self.strategy_genes.luxury_weight_scale).clamp(-2.0, 2.0);
         tuned
     }
 
-    pub fn spawn_daughter(
-        &mut self,
-        mutation_strength: f32,
-        rng: &mut impl Rng,
-    ) -> Option<Ship> {
+    pub fn spawn_daughter(&mut self, mutation_strength: f32, rng: &mut impl Rng) -> Option<Ship> {
         let docked_island_id = self.docked_island()?;
         let num_islands = self.ledger.len();
 
@@ -250,8 +249,8 @@ impl Ship {
                 .filter(|purchase| purchase.resource == cargo.resource)
                 .map(|purchase| purchase.unit_price)
                 .unwrap_or_else(|| self.median_price_for_resource(cargo.resource));
-            let conservative_cargo_value = (cargo_book_price * BID_PRICE_MULTIPLIER * cargo.amount)
-                .max(0.0);
+            let conservative_cargo_value =
+                (cargo_book_price * BID_PRICE_MULTIPLIER * cargo.amount).max(0.0);
             net_worth += conservative_cargo_value;
         }
         net_worth
@@ -320,6 +319,112 @@ impl Ship {
 
             self.last_dock_action = DockAction::Sold;
         }
+        self.last_dock_action
+    }
+
+    pub fn trade_barter_if_carrying(
+        &mut self,
+        current_island_id: usize,
+        island: &mut Island,
+        context: &LoadPlanningContext<'_>,
+    ) -> DockAction {
+        if self.last_dock_action != DockAction::None {
+            return self.last_dock_action;
+        }
+
+        let Some(cargo) = self.cargo else {
+            return self.last_dock_action;
+        };
+
+        let cargo_bid_price = island.bid_price(cargo.resource);
+        if !cargo_bid_price.is_finite() || cargo_bid_price <= 0.0 || cargo.amount <= 0.0 {
+            return self.last_dock_action;
+        }
+
+        let cargo_value_budget = cargo.amount * cargo_bid_price;
+        if cargo_value_budget <= 0.0 {
+            return self.last_dock_action;
+        }
+
+        let utility_context = UtilityContext {
+            island_positions: context.island_positions,
+            current_tick: context.current_tick,
+            tuning: context.tuning,
+            outbound_recent_departures: context.outbound_recent_departures,
+        };
+
+        let mut best_choice: Option<(Resource, usize, f32, f32)> = None;
+        let mut best_utility = f32::NEG_INFINITY;
+
+        for resource in Resource::iter() {
+            if resource == cargo.resource {
+                continue;
+            }
+
+            let ask_price = island.ask_price(resource);
+            if !ask_price.is_finite() || ask_price <= 0.0 {
+                continue;
+            }
+
+            let available = island.inventory[resource.idx()].max(0.0);
+            let required_amount_for_full_value = cargo_value_budget / ask_price;
+            if required_amount_for_full_value <= 0.0 {
+                continue;
+            }
+
+            if available < required_amount_for_full_value {
+                continue;
+            }
+
+            for target_id in 0..self.ledger.len() {
+                if target_id == current_island_id {
+                    continue;
+                }
+
+                let (utility, _confidence) = self.calculate_utility(
+                    resource,
+                    target_id,
+                    ask_price,
+                    required_amount_for_full_value,
+                    &utility_context,
+                );
+
+                if utility > best_utility {
+                    best_utility = utility;
+                    best_choice = Some((
+                        resource,
+                        target_id,
+                        ask_price,
+                        required_amount_for_full_value,
+                    ));
+                }
+            }
+        }
+
+        let Some((resource, target_id, ask_price, acquired_amount)) = best_choice else {
+            return self.last_dock_action;
+        };
+
+        if best_utility <= 0.0 || acquired_amount <= 0.0 {
+            return self.last_dock_action;
+        }
+
+        island.inventory[cargo.resource.idx()] += cargo.amount;
+        island.inventory[resource.idx()] =
+            (island.inventory[resource.idx()] - acquired_amount).max(0.0);
+
+        self.cargo = Some(Cargo {
+            resource,
+            amount: acquired_amount,
+        });
+        self.last_purchase = Some(PurchaseRecord {
+            unit_price: ask_price,
+            resource,
+        });
+        self.planned_target_after_load = Some(target_id);
+        self.cargo_distance_accrued = 0.0;
+        self.just_sold_resource = Some(cargo.resource);
+        self.last_dock_action = DockAction::Bartered;
         self.last_dock_action
     }
 
@@ -448,7 +553,8 @@ impl Ship {
     ) -> Option<usize> {
         if let Some(cargo) = self.cargo {
             if let Some(preselected_target) = self.planned_target_after_load {
-                if preselected_target != current_island_id && preselected_target < self.ledger.len() {
+                if preselected_target != current_island_id && preselected_target < self.ledger.len()
+                {
                     return Some(preselected_target);
                 }
             }
@@ -529,9 +635,7 @@ impl Ship {
                     })
                     .collect();
 
-                scored.sort_by(|a, b| {
-                    b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-                });
+                scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
                 let top_k = scored.len().min(3);
                 if top_k == 0 {
@@ -745,6 +849,17 @@ impl Ship {
         let expected_profit = real_expected_profit * confidence;
         let fuel_cost = distance * context.tuning.transport_cost_per_distance;
 
+        let data_age = context
+            .current_tick
+            .saturating_sub(self.ledger[target_id].tick_updated) as f32;
+        let broke_revenue_threshold = gross_expected_revenue * BROKE_CASH_COVERAGE_RATIO;
+        let recent_broke_factor = (1.0 - data_age / RECENT_BROKE_TICKS).clamp(0.0, 1.0);
+        let broke_penalty = if has_quoted_cash && quoted_island_cash < broke_revenue_threshold {
+            BROKE_ISLAND_UTILITY_PENALTY * recent_broke_factor
+        } else {
+            0.0
+        };
+
         let last_seen_tick = self.ledger[target_id].last_seen_tick;
         let neglect_ticks = context.current_tick.saturating_sub(last_seen_tick) as f32;
         let neglect_bonus = (neglect_ticks * context.tuning.island_neglect_bonus_per_tick)
@@ -755,7 +870,7 @@ impl Ship {
         let luxury_signal = (buy_price * lot_scale) - average_base_cost;
         let luxury_bonus = context.tuning.luxury_weight * luxury_signal;
 
-        let utility = expected_profit - fuel_cost + neglect_bonus + luxury_bonus;
+        let utility = expected_profit - fuel_cost + neglect_bonus + luxury_bonus - broke_penalty;
 
         (utility, confidence)
     }

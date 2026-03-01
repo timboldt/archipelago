@@ -175,13 +175,12 @@ impl Island {
         for resource in Resource::iter() {
             let index = resource.idx();
             let inventory = self.inventory[index];
-            let logistic_factor =
-                (1.0 - (inventory / INVENTORY_CARRYING_CAPACITY)).clamp(0.0, 1.0);
+            let logistic_factor = (1.0 - (inventory / INVENTORY_CARRYING_CAPACITY)).clamp(0.0, 1.0);
 
             if resource != Resource::Tools {
-                let tools_boost =
-                    (1.0 + self.inventory[Resource::Tools.idx()] * TOOLS_PRODUCTIVITY_SCALE)
-                        .clamp(1.0, TOOLS_PRODUCTIVITY_CAP);
+                let tools_boost = (1.0
+                    + self.inventory[Resource::Tools.idx()] * TOOLS_PRODUCTIVITY_SCALE)
+                    .clamp(1.0, TOOLS_PRODUCTIVITY_CAP);
                 let mut extraction =
                     self.production_rates[index] * self.population * logistic_factor * dt;
                 if resource == Resource::Grain {
@@ -211,9 +210,9 @@ impl Island {
             self.inventory[tools_idx] += feasible_batch * 1.5;
         }
 
-        let local_economic_income =
-            (self.population * PER_CAPITA_CASH_GENERATION + feasible_batch * INDUSTRIAL_CASH_GENERATION)
-                * dt;
+        let local_economic_income = (self.population * PER_CAPITA_CASH_GENERATION
+            + feasible_batch * INDUSTRIAL_CASH_GENERATION)
+            * dt;
         self.cash += local_economic_income.max(0.0);
 
         if self.cash > CAPITAL_INVESTMENT_THRESHOLD {
@@ -236,8 +235,10 @@ impl Island {
         self.production_rates[grain_idx] =
             self.production_rates[grain_idx].max(GRAIN_SURVIVAL_PRODUCTION_FLOOR);
 
-        let non_grain_ceiling = self.production_rates[grain_idx] * SURVIVAL_NON_GRAIN_TO_GRAIN_RATIO;
-        self.production_rates[timber_idx] = self.production_rates[timber_idx].min(non_grain_ceiling);
+        let non_grain_ceiling =
+            self.production_rates[grain_idx] * SURVIVAL_NON_GRAIN_TO_GRAIN_RATIO;
+        self.production_rates[timber_idx] =
+            self.production_rates[timber_idx].min(non_grain_ceiling);
         self.production_rates[iron_idx] = self.production_rates[iron_idx].min(non_grain_ceiling);
     }
 
@@ -358,7 +359,8 @@ impl Island {
         let frame_y = origin_y - panel_padding;
         let frame_w = chart_width + panel_padding * 2.0;
         let frame_h = chart_height + panel_padding * 2.0;
-        let status_panel_h = panel_padding * 2.0 + status_row_height * 3.0 + status_row_spacing * 2.0;
+        let status_panel_h =
+            panel_padding * 2.0 + status_row_height * 3.0 + status_row_spacing * 2.0;
         let status_panel_y = frame_y + frame_h + status_gap;
 
         draw_rectangle(
@@ -429,7 +431,13 @@ impl Island {
             border_thickness,
             WHITE,
         );
-        draw_rectangle(frame_x, status_panel_y, border_thickness, status_panel_h, WHITE);
+        draw_rectangle(
+            frame_x,
+            status_panel_y,
+            border_thickness,
+            status_panel_h,
+            WHITE,
+        );
         draw_rectangle(
             frame_x + frame_w - border_thickness,
             status_panel_y,
@@ -438,8 +446,8 @@ impl Island {
             WHITE,
         );
 
-        let pop_fill = (self.population / (self.population + POPULATION_DISPLAY_SCALE))
-            .clamp(0.0, 1.0);
+        let pop_fill =
+            (self.population / (self.population + POPULATION_DISPLAY_SCALE)).clamp(0.0, 1.0);
         let cash_fill = (self.cash / (self.cash + CASH_DISPLAY_SCALE)).clamp(0.0, 1.0);
         let infra_fill = (self.infrastructure_level / INFRASTRUCTURE_DISPLAY_MAX).clamp(0.0, 1.0);
 
@@ -449,7 +457,13 @@ impl Island {
         let row2_y = row1_y + status_row_height + status_row_spacing;
         let row3_y = row2_y + status_row_height + status_row_spacing;
 
-        draw_rectangle(status_inner_x, row1_y, status_inner_w, status_row_height, DARKGRAY);
+        draw_rectangle(
+            status_inner_x,
+            row1_y,
+            status_inner_w,
+            status_row_height,
+            DARKGRAY,
+        );
         draw_rectangle(
             status_inner_x,
             row1_y,
@@ -458,7 +472,13 @@ impl Island {
             SKYBLUE,
         );
 
-        draw_rectangle(status_inner_x, row2_y, status_inner_w, status_row_height, DARKGRAY);
+        draw_rectangle(
+            status_inner_x,
+            row2_y,
+            status_inner_w,
+            status_row_height,
+            DARKGRAY,
+        );
         draw_rectangle(
             status_inner_x,
             row2_y,
@@ -467,7 +487,13 @@ impl Island {
             GOLD,
         );
 
-        draw_rectangle(status_inner_x, row3_y, status_inner_w, status_row_height, DARKGRAY);
+        draw_rectangle(
+            status_inner_x,
+            row3_y,
+            status_inner_w,
+            status_row_height,
+            DARKGRAY,
+        );
         draw_rectangle(
             status_inner_x,
             row3_y,
