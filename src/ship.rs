@@ -127,7 +127,11 @@ impl Ship {
         island.copy_ledger_to_ship(&mut self.ledger);
     }
 
-    pub fn plan_next_island(&self, current_island_id: usize, island_positions: &[Vec2]) -> Option<usize> {
+    pub fn plan_next_island(
+        &self,
+        current_island_id: usize,
+        island_positions: &[Vec2],
+    ) -> Option<usize> {
         let mut best_target = None;
         let mut best_utility = f32::NEG_INFINITY;
         let baseline_price = if let Some(cargo) = self.cargo {
@@ -185,7 +189,17 @@ impl Ship {
     }
 
     pub fn draw(&self) {
-        draw_circle(self.pos.x, self.pos.y, 8.0, WHITE);
+        let fill = match self.cargo {
+            Some(cargo) => match cargo.resource {
+                Resource::Grain => YELLOW,
+                Resource::Timber => GREEN,
+                Resource::Iron => DARKGRAY,
+                Resource::Tools => RED,
+            },
+            None => WHITE,
+        };
+
+        draw_circle(self.pos.x, self.pos.y, 8.0, fill);
         draw_circle_lines(self.pos.x, self.pos.y, 8.0, 2.0, LIGHTGRAY);
     }
 }

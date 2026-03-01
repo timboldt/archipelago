@@ -21,6 +21,7 @@ async fn main() {
         world.draw();
 
         set_default_camera();
+        world.draw_ui();
         next_frame().await;
     }
 }

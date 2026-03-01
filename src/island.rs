@@ -119,24 +119,73 @@ impl Island {
 
     pub fn merge_ledger(&mut self, incoming: &PriceLedger) {
         let len = self.ledger.len().min(incoming.len());
-        for i in 0..len {
-            if incoming[i].tick_updated > self.ledger[i].tick_updated {
-                self.ledger[i] = incoming[i];
+        for (i, incoming_entry) in incoming.iter().copied().enumerate().take(len) {
+            if incoming_entry.tick_updated > self.ledger[i].tick_updated {
+                self.ledger[i] = incoming_entry;
             }
         }
     }
 
     pub fn copy_ledger_to_ship(&self, ship_ledger: &mut PriceLedger) {
         let len = ship_ledger.len().min(self.ledger.len());
-        for i in 0..len {
-            if self.ledger[i].tick_updated >= ship_ledger[i].tick_updated {
-                ship_ledger[i] = self.ledger[i];
+        for (i, ship_entry) in ship_ledger.iter_mut().enumerate().take(len) {
+            if self.ledger[i].tick_updated >= ship_entry.tick_updated {
+                *ship_entry = self.ledger[i];
             }
         }
     }
 
-    pub fn draw(&self) {
-        draw_circle(self.pos.x, self.pos.y, 20.0, DARKGREEN);
-        draw_circle_lines(self.pos.x, self.pos.y, 20.0, 3.0, GREEN);
+    pub fn draw(&self, world_units_per_pixel: f32) {
+        let chart_width = 20.0 * world_units_per_pixel;
+        let chart_height = 14.0 * world_units_per_pixel;
+        let bar_width = 4.0 * world_units_per_pixel;
+        let bar_gap = 1.0 * world_units_per_pixel;
+        let panel_padding = 2.0 * world_units_per_pixel;
+        let border_thickness = 1.0 * world_units_per_pixel;
+        let origin_x = self.pos.x - chart_width * 0.5;
+        let origin_y = self.pos.y - chart_height * 0.5;
+
+        draw_rectangle(
+            origin_x - panel_padding,
+            origin_y - panel_padding,
+            chart_width + panel_padding * 2.0,
+            chart_height + panel_padding * 2.0,
+            Color::from_rgba(12, 24, 40, 180),
+        );
+        draw_rectangle_lines(
+            origin_x - panel_padding,
+            origin_y - panel_padding,
+            chart_width + panel_padding * 2.0,
+            chart_height + panel_padding * 2.0,
+            border_thickness,
+            WHITE,
+        );
+
+        let max_inventory = self
+            .inventory
+            .iter()
+            .copied()
+            .fold(0.0_f32, f32::max)
+            .max(1.0);
+
+        for (bar_index, resource) in Resource::iter().enumerate() {
+            let value = self.inventory[resource.idx()].max(0.0);
+            let normalized = (value / max_inventory).clamp(0.0, 1.0);
+            let mut bar_height = normalized * chart_height;
+            if value > 0.0 {
+                bar_height = bar_height.max(1.0 * world_units_per_pixel);
+            }
+            let x = origin_x + bar_index as f32 * (bar_width + bar_gap);
+            let y = origin_y + chart_height - bar_height;
+
+            let color = match resource {
+                Resource::Grain => YELLOW,
+                Resource::Timber => GREEN,
+                Resource::Iron => DARKGRAY,
+                Resource::Tools => RED,
+            };
+
+            draw_rectangle(x, y, bar_width, bar_height, color);
+        }
     }
 }

@@ -26,9 +26,19 @@ cargo run
 cargo test
 ```
 
+## Development Hygiene
+
+```sh
+cargo clippy --all-targets
+cargo +nightly fmt
+```
+
 ## Simulation Notes
 
 - **World size:** 5000×5000 simulation space rendered with a `macroquad` camera.
+- **Island visuals:** Islands are drawn as compact 4-bar charts for Grain, Timber, Iron, and Tools abundance.
+- **Chart readability:** Island chart dimensions are scaled from current view units-per-pixel so bars stay legible across zoom/viewport changes.
+- **UI legend:** A fixed top-left legend maps resource colors (and empty ships) for quick visual decoding.
 - **Resources:** Grain, Timber, Iron, Tools.
 - **Prices:** Island-local, inventory-driven (`base_cost / (inventory + 1.0)`).
 - **Information flow:** Price ledgers are merged only during ship-island docking interactions.

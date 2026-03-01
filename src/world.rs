@@ -31,7 +31,12 @@ impl World {
             .map(|i| {
                 let speed = rng.gen_range(200.0_f32..500.0);
                 let start_island_id = i % islands.len();
-                Ship::new(islands[start_island_id].pos, speed, num_islands, start_island_id)
+                Ship::new(
+                    islands[start_island_id].pos,
+                    speed,
+                    num_islands,
+                    start_island_id,
+                )
             })
             .collect();
 
@@ -84,26 +89,26 @@ impl World {
         let island_positions: Vec<Vec2> = self.islands.iter().map(|island| island.pos).collect();
         let mut departure_orders: Vec<(usize, usize)> = Vec::new();
 
-        for island_id in 0..self.islands.len() {
-            if ships_by_island[island_id].is_empty() {
+        for (island_id, ship_indices) in ships_by_island.iter().enumerate() {
+            if ship_indices.is_empty() {
                 continue;
             }
 
             {
                 let island = &mut self.islands[island_id];
 
-                for &ship_idx in &ships_by_island[island_id] {
+                for &ship_idx in ship_indices {
                     self.ships[ship_idx].begin_dock_tick();
                     let _ = self.ships[ship_idx].trade_unload_if_carrying(island);
                 }
 
                 island.recompute_local_prices(self.tick);
 
-                for &ship_idx in &ships_by_island[island_id] {
+                for &ship_idx in ship_indices {
                     let _ = self.ships[ship_idx].trade_load_if_empty(island);
                 }
 
-                for &ship_idx in &ships_by_island[island_id] {
+                for &ship_idx in ship_indices {
                     self.ships[ship_idx].sync_ledgers_with_island(island);
                     if let Some(target_island_id) =
                         self.ships[ship_idx].plan_next_island(island_id, &island_positions)
@@ -123,11 +128,47 @@ impl World {
     }
 
     pub fn draw(&self) {
+        let world_units_per_pixel_x = WORLD_SIZE / screen_width().max(1.0);
+        let world_units_per_pixel_y = WORLD_SIZE / screen_height().max(1.0);
+        let world_units_per_pixel = world_units_per_pixel_x.max(world_units_per_pixel_y);
+
         for island in &self.islands {
-            island.draw();
+            island.draw(world_units_per_pixel);
         }
         for ship in &self.ships {
             ship.draw();
+        }
+    }
+
+    pub fn draw_ui(&self) {
+        let panel_x = 14.0;
+        let panel_y = 14.0;
+        let panel_w = 180.0;
+        let panel_h = 124.0;
+
+        draw_rectangle(
+            panel_x,
+            panel_y,
+            panel_w,
+            panel_h,
+            Color::from_rgba(8, 16, 30, 210),
+        );
+        draw_rectangle_lines(panel_x, panel_y, panel_w, panel_h, 2.0, LIGHTGRAY);
+        draw_text("Legend", panel_x + 10.0, panel_y + 22.0, 24.0, WHITE);
+
+        let entries = [
+            ("Grain", YELLOW),
+            ("Timber", GREEN),
+            ("Iron", DARKGRAY),
+            ("Tools", RED),
+            ("Empty ship", WHITE),
+        ];
+
+        for (i, (label, color)) in entries.iter().enumerate() {
+            let y = panel_y + 42.0 + i as f32 * 16.0;
+            draw_rectangle(panel_x + 10.0, y - 10.0, 10.0, 10.0, *color);
+            draw_rectangle_lines(panel_x + 10.0, y - 10.0, 10.0, 10.0, 1.0, GRAY);
+            draw_text(label, panel_x + 28.0, y, 18.0, WHITE);
         }
     }
 }

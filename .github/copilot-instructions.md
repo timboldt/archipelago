@@ -88,3 +88,8 @@ struct Ship {
 ## Documentation Hygiene
 
 - Keep `README.md` up to date with implementation changes. If behavior, controls, architecture, setup, dependencies, or status changes, update `README.md` in the same work.
+
+## Development Hygiene
+
+- Run `cargo clippy --all-targets`.
+- Run `cargo +nightly fmt`.
