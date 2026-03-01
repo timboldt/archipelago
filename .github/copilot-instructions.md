@@ -4,7 +4,7 @@
 
 A high-concurrency economic simulation of an archipelago written in Rust. Islands are independent economic nodes; ships are autonomous agents that trade goods and propagate information via a gossip protocol. The core mechanic is that **information and goods both have latency** based on travel distance — ships plan routes using "stale" data modulated by a confidence decay function.
 
-The `OLD/` directory contains an early prototype (different asset model) and should not be used as a reference for the new implementation. `PLAN.md` at the repo root is the authoritative design document.
+The `OLD/` directory contains an early prototype (different asset model) and should not be used as a reference for the new implementation. `README.md` at the repo root should stay aligned with the current architecture and status.
 
 ## Planned Tech Stack
 
@@ -84,3 +84,7 @@ struct Ship {
 - The confidence decay constant `k` controls how "local" or "speculative" ship behavior is — tuning it is the primary emergence lever (Phase 3).
 - Resources are fixed-size arrays (`[f32; 4]`) rather than maps for cache efficiency; iterate over them using `Resource::iter()` via `strum`.
 - Ship ledger merges are the **only** mechanism for information propagation — there is no global broadcast.
+
+## Documentation Hygiene
+
+- Keep `README.md` up to date with implementation changes. If behavior, controls, architecture, setup, dependencies, or status changes, update `README.md` in the same work.
