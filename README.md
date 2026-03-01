@@ -56,7 +56,7 @@ cargo +nightly fmt
 - **Tier-2 industry:** Tools are manufactured (not passively extracted) by converting Timber + Iron, scaled by island `infrastructure_level`, creating potential industrial hubs.
 - **Industrial scaling:** Tool fabrication now scales with both infrastructure and available labor (population), so growing islands can expand manufacturing throughput.
 - **Adaptive controller:** Islands apply a capped fabrication boost when local `Tools / 1k pop` falls below a target floor, helping prevent long-run tool collapse.
-- **Industrial throughput:** Tool fabrication base rate is increased (`0.55`) and output per batch is higher, improving tool replenishment under population growth.
+- **Industrial throughput:** Tool fabrication now runs with a moderated base rate (`0.45`) and moderated output per batch (`2.2`) to curb long-run tools overshoot while preserving replenishment.
 - **Supply-chain rebalance:** Timber extraction is now biased higher than iron extraction, and tool fabrication consumes more iron per batch while producing more tools, which helps drain iron gluts and raise tool availability.
 - **Comparative advantage:** Islands are now initialized with partial resource scarcity (including forced-zero extraction in some resources) and a boosted focus resource, creating stronger specialization and trade dependency.
 - **Specialization tuning:** Timber/Iron zero-production probability is reduced to `0.20` to preserve baseline raw-material flow while still allowing specialization.
