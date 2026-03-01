@@ -6,6 +6,23 @@ use strum_macros::EnumIter;
 pub const RESOURCE_COUNT: usize = 4;
 pub const BASE_COSTS: [f32; RESOURCE_COUNT] = [20.0, 30.0, 45.0, 70.0];
 const INVENTORY_CARRYING_CAPACITY: f32 = 180.0;
+const INITIAL_POPULATION_MIN: f32 = 45.0;
+const INITIAL_POPULATION_MAX: f32 = 140.0;
+const INITIAL_CASH_MIN: f32 = 900.0;
+const INITIAL_CASH_MAX: f32 = 2600.0;
+const INITIAL_INFRASTRUCTURE_MIN: f32 = 0.7;
+const INITIAL_INFRASTRUCTURE_MAX: f32 = 1.5;
+const MIN_POPULATION: f32 = 8.0;
+const POPULATION_GROWTH_RATE: f32 = 0.07;
+const POPULATION_STARVATION_RATE: f32 = 0.08;
+const GRAIN_PER_CAPITA_STABILITY: f32 = 0.07;
+const TOOL_FABRICATION_BASE_RATE: f32 = 0.28;
+const GRAIN_EXTRACTION_BONUS: f32 = 1.35;
+const PER_CAPITA_CASH_GENERATION: f32 = 0.22;
+const INDUSTRIAL_CASH_GENERATION: f32 = 0.18;
+const POPULATION_DISPLAY_SCALE: f32 = 150.0;
+const CASH_DISPLAY_SCALE: f32 = 800.0;
+const INFRASTRUCTURE_DISPLAY_MAX: f32 = 2.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, EnumIter)]
 #[repr(usize)]
@@ -40,6 +57,9 @@ pub struct Island {
     pub inventory: Inventory,
     pub production_rates: Inventory,
     pub consumption_rates: Inventory,
+    pub population: f32,
+    pub cash: f32,
+    pub infrastructure_level: f32,
     pub local_prices: [f32; RESOURCE_COUNT],
     pub ledger: PriceLedger,
 }
@@ -63,6 +83,10 @@ impl Island {
             inventory,
             production_rates,
             consumption_rates,
+            population: rng.gen_range(INITIAL_POPULATION_MIN..INITIAL_POPULATION_MAX),
+            cash: rng.gen_range(INITIAL_CASH_MIN..INITIAL_CASH_MAX),
+            infrastructure_level: rng
+                .gen_range(INITIAL_INFRASTRUCTURE_MIN..INITIAL_INFRASTRUCTURE_MAX),
             local_prices: [0.0; RESOURCE_COUNT],
             ledger: vec![
                 PriceEntry {
@@ -78,15 +102,55 @@ impl Island {
     }
 
     pub fn produce_consume_and_price(&mut self, dt: f32, tick: u64) {
+        let grain_idx = Resource::Grain.idx();
+        let grain_stability_target = self.population * GRAIN_PER_CAPITA_STABILITY;
+        if self.inventory[grain_idx] > grain_stability_target {
+            self.population += self.population * POPULATION_GROWTH_RATE * dt;
+        } else {
+            self.population -= self.population * POPULATION_STARVATION_RATE * dt;
+        }
+        self.population = self.population.max(MIN_POPULATION);
+
         for resource in Resource::iter() {
             let index = resource.idx();
             let inventory = self.inventory[index];
             let logistic_factor =
                 (1.0 - (inventory / INVENTORY_CARRYING_CAPACITY)).clamp(0.0, 1.0);
-            self.inventory[index] += self.production_rates[index] * logistic_factor * dt;
-            self.inventory[index] -= self.consumption_rates[index] * dt;
+
+            if resource != Resource::Tools {
+                let mut extraction =
+                    self.production_rates[index] * self.population * logistic_factor * dt;
+                if resource == Resource::Grain {
+                    extraction *= GRAIN_EXTRACTION_BONUS;
+                }
+                self.inventory[index] += extraction;
+            }
+
+            let demand = self.consumption_rates[index] * self.population * dt;
+            self.inventory[index] -= demand;
             self.inventory[index] = self.inventory[index].max(0.0);
         }
+
+        let iron_idx = Resource::Iron.idx();
+        let timber_idx = Resource::Timber.idx();
+        let tools_idx = Resource::Tools.idx();
+
+        let industrial_rate = TOOL_FABRICATION_BASE_RATE * self.infrastructure_level * dt;
+        let feasible_batch = self.inventory[iron_idx]
+            .min(self.inventory[timber_idx])
+            .min(industrial_rate)
+            .max(0.0);
+        if feasible_batch > 0.0 {
+            self.inventory[iron_idx] -= feasible_batch;
+            self.inventory[timber_idx] -= feasible_batch;
+            self.inventory[tools_idx] += feasible_batch * 1.5;
+        }
+
+        let local_economic_income =
+            (self.population * PER_CAPITA_CASH_GENERATION + feasible_batch * INDUSTRIAL_CASH_GENERATION)
+                * dt;
+        self.cash += local_economic_income.max(0.0);
+
         self.recompute_local_prices(tick);
     }
 
@@ -107,14 +171,26 @@ impl Island {
         }
     }
 
-    pub fn sell_to_island(&mut self, resource: Resource, amount: f32) -> f32 {
+    pub fn sell_to_island(&mut self, resource: Resource, amount: f32) -> (f32, f32) {
         if amount <= 0.0 {
-            return 0.0;
+            return (0.0, 0.0);
         }
         let index = resource.idx();
         let price = self.local_prices[index];
-        self.inventory[index] += amount;
-        amount * price
+        if !price.is_finite() || price <= 0.0 || self.cash <= 0.0 {
+            return (0.0, 0.0);
+        }
+
+        let affordable = (self.cash / price).max(0.0);
+        let filled = amount.min(affordable);
+        let total_value = filled * price;
+        if filled <= 0.0 || total_value <= 0.0 {
+            return (0.0, 0.0);
+        }
+
+        self.inventory[index] += filled;
+        self.cash -= total_value;
+        (filled, total_value)
     }
 
     pub fn buy_from_island(&mut self, resource: Resource, requested_amount: f32) -> (f32, f32) {
@@ -124,8 +200,12 @@ impl Island {
         let index = resource.idx();
         let available = self.inventory[index].max(0.0);
         let filled = requested_amount.min(available);
+        if filled <= 0.0 {
+            return (0.0, 0.0);
+        }
         self.inventory[index] -= filled;
         let total_cost = filled * self.local_prices[index];
+        self.cash += total_cost;
         (filled, total_cost)
     }
 
@@ -165,12 +245,17 @@ impl Island {
         let bar_gap = 1.0 * world_units_per_pixel;
         let panel_padding = 2.0 * world_units_per_pixel;
         let border_thickness = 1.0 * world_units_per_pixel;
+        let status_gap = 2.0 * world_units_per_pixel;
+        let status_row_height = 2.0 * world_units_per_pixel;
+        let status_row_spacing = 1.0 * world_units_per_pixel;
         let origin_x = self.pos.x - chart_width * 0.5;
         let origin_y = self.pos.y - chart_height * 0.5;
         let frame_x = origin_x - panel_padding;
         let frame_y = origin_y - panel_padding;
         let frame_w = chart_width + panel_padding * 2.0;
         let frame_h = chart_height + panel_padding * 2.0;
+        let status_panel_h = panel_padding * 2.0 + status_row_height * 3.0 + status_row_spacing * 2.0;
+        let status_panel_y = frame_y + frame_h + status_gap;
 
         draw_rectangle(
             frame_x,
@@ -223,5 +308,68 @@ impl Island {
 
             draw_rectangle(x, y, bar_width, bar_height, color);
         }
+
+        draw_rectangle(
+            frame_x,
+            status_panel_y,
+            frame_w,
+            status_panel_h,
+            Color::from_rgba(12, 24, 40, 180),
+        );
+
+        draw_rectangle(frame_x, status_panel_y, frame_w, border_thickness, WHITE);
+        draw_rectangle(
+            frame_x,
+            status_panel_y + status_panel_h - border_thickness,
+            frame_w,
+            border_thickness,
+            WHITE,
+        );
+        draw_rectangle(frame_x, status_panel_y, border_thickness, status_panel_h, WHITE);
+        draw_rectangle(
+            frame_x + frame_w - border_thickness,
+            status_panel_y,
+            border_thickness,
+            status_panel_h,
+            WHITE,
+        );
+
+        let pop_fill = (self.population / (self.population + POPULATION_DISPLAY_SCALE))
+            .clamp(0.0, 1.0);
+        let cash_fill = (self.cash / (self.cash + CASH_DISPLAY_SCALE)).clamp(0.0, 1.0);
+        let infra_fill = (self.infrastructure_level / INFRASTRUCTURE_DISPLAY_MAX).clamp(0.0, 1.0);
+
+        let status_inner_x = frame_x + panel_padding;
+        let status_inner_w = (frame_w - panel_padding * 2.0).max(0.0);
+        let row1_y = status_panel_y + panel_padding;
+        let row2_y = row1_y + status_row_height + status_row_spacing;
+        let row3_y = row2_y + status_row_height + status_row_spacing;
+
+        draw_rectangle(status_inner_x, row1_y, status_inner_w, status_row_height, DARKGRAY);
+        draw_rectangle(
+            status_inner_x,
+            row1_y,
+            status_inner_w * pop_fill,
+            status_row_height,
+            SKYBLUE,
+        );
+
+        draw_rectangle(status_inner_x, row2_y, status_inner_w, status_row_height, DARKGRAY);
+        draw_rectangle(
+            status_inner_x,
+            row2_y,
+            status_inner_w * cash_fill,
+            status_row_height,
+            GOLD,
+        );
+
+        draw_rectangle(status_inner_x, row3_y, status_inner_w, status_row_height, DARKGRAY);
+        draw_rectangle(
+            status_inner_x,
+            row3_y,
+            status_inner_w * infra_fill,
+            status_row_height,
+            ORANGE,
+        );
     }
 }

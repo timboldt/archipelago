@@ -258,21 +258,26 @@ impl Ship {
         if self.last_dock_action != DockAction::None {
             return self.last_dock_action;
         }
-        if let Some(cargo) = self.cargo.take() {
-            let gross_revenue = island.sell_to_island(cargo.resource, cargo.amount);
+        if let Some(mut cargo) = self.cargo.take() {
+            let (sold_amount, gross_revenue) = island.sell_to_island(cargo.resource, cargo.amount);
+            if sold_amount <= 0.0 || gross_revenue <= 0.0 {
+                self.cargo = Some(cargo);
+                return self.last_dock_action;
+            }
+
             let raw_freight_cost =
-                self.cargo_distance_accrued * cargo.amount * tuning.transport_cost_per_distance;
+                self.cargo_distance_accrued * sold_amount * tuning.transport_cost_per_distance;
             let realized_freight_cost =
                 raw_freight_cost.min(gross_revenue * MAX_REALIZED_FREIGHT_SHARE);
             let net_revenue = gross_revenue - realized_freight_cost;
             self.cash += net_revenue;
 
-            if let Some(purchase) = self.last_purchase.take() {
+            if let Some(purchase) = self.last_purchase {
                 if purchase.resource == cargo.resource
-                    && cargo.amount > 0.0
+                    && sold_amount > 0.0
                     && island_id < self.route_memory.len()
                 {
-                    let sale_unit_price = net_revenue / cargo.amount;
+                    let sale_unit_price = net_revenue / sold_amount;
                     let normalized_margin =
                         (sale_unit_price - purchase.unit_price) / (purchase.unit_price + 1.0);
                     self.route_memory[island_id] += normalized_margin * tuning.learning_rate;
@@ -280,7 +285,15 @@ impl Ship {
                 }
             }
 
-            self.cargo_distance_accrued = 0.0;
+            let remaining = (cargo.amount - sold_amount).max(0.0);
+            if remaining > 0.0 {
+                cargo.amount = remaining;
+                self.cargo = Some(cargo);
+            } else {
+                self.last_purchase = None;
+                self.cargo_distance_accrued = 0.0;
+            }
+
             self.just_sold_resource = Some(cargo.resource);
 
             self.last_dock_action = DockAction::Sold;

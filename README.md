@@ -39,13 +39,18 @@ cargo +nightly fmt
 
 - **World size:** 5000×5000 simulation space rendered with a `macroquad` camera.
 - **Island visuals:** Islands are drawn as compact 4-bar charts for Grain, Timber, Iron, and Tools abundance.
+- **Island status bars:** Each island chart now includes three horizontal bars beneath it for Population, Cash, and Infrastructure.
 - **Chart readability:** Island chart dimensions are scaled from current view units-per-pixel so bars stay legible across zoom/viewport changes.
 - **UI legend:** A fixed top-left legend maps resource colors (and empty ships) for quick visual decoding.
 - **Tuning HUD:** The same panel shows the live `speculation_floor` value.
 - **Fleet HUD:** The panel also shows the current ship count.
 - **Resources:** Grain, Timber, Iron, Tools.
 - **Prices:** Island-local, inventory-driven (`base_cost / (inventory + 1.0)`).
-- **Production dynamics:** Island production is damped by a logistic factor as inventory approaches a carrying capacity, reducing runaway growth and oscillation.
+- **Population engine:** Islands now track `population`; grain abundance supports growth while grain scarcity causes faster shrinkage, creating endogenous demand pressure.
+- **Production dynamics:** Tier-1 goods (Grain, Timber, Iron) are labor-driven and scale with population (plus logistic damping), so larger islands produce and consume more.
+- **Tier-2 industry:** Tools are manufactured (not passively extracted) by converting Timber + Iron, scaled by island `infrastructure_level`, creating potential industrial hubs.
+- **Island capital:** Islands now carry finite `cash`; they can only buy from ships up to affordability, and earn cash when ships purchase local inventory.
+- **Liquidity stabilization:** Islands also generate modest endogenous cash from population activity and industrial throughput to avoid system-wide insolvency cascades.
 - **Transport cost:** Cargo accrues freight cost while traveling; planning accounts for projected freight and realized P&L applies a capped freight deduction.
 - **Pair-based load selection:** Empty ships score full `(local resource -> destination island)` pairs and buy the resource from the best pair, rather than picking the cheapest local good first.
 - **Anti-roundtrip guard:** A ship will not immediately reload the same resource it just sold in the same dock cycle.
@@ -56,7 +61,7 @@ cargo +nightly fmt
 - **Outlier rescue:** Each actor gossips a `last_seen_tick` estimate per island through ledgers; stale/rarely seen islands receive a capped neglect bonus during planning.
 - **Anti-herding:** Planning applies a pheromone-style route signal over the last 10 ticks: if many ships recently left `A -> B`, confidence in `B`'s quoted prices is attenuated by approximately `1/N` for ships departing from `A`.
 - **Ship learning:** Each ship maintains a decaying destination memory updated by realized trade margins, and this memory biases future route utility.
-- **Wealth tax / upkeep:** Every tick, each ship pays a tiny fixed maintenance cost from cash, so persistently unprofitable traders eventually fail the scuttle threshold and are replaced by fitter descendants.
+- **Wealth tax / upkeep:** Every tick, each ship pays a tiny fixed maintenance cost from cash, so persistently unprofitable traders eventually fail the scuttle threshold and are replaced by fitter descendants without collapsing the whole fleet.
 - **Lifecycle selection:** Fleet composition evolves over time: low-cash ships are retired, while wealthy docked ships split into daughter ships with small Gaussian strategy mutations.
 - **Trader phenotypes:** Mutated strategy genes now include risk tolerance (`confidence_decay_k` scaling: confident long-range vs cynical local traders) and a `luxury_weight` trait that biases utility toward higher-value cargo.
 - **Dock cadence:** Ships that sell on a tick stay docked for at least that tick (no immediate departure while empty), then can reload and depart on a following tick.
