@@ -19,9 +19,6 @@ async fn main() {
     const LEARNING_RATE: f32 = 0.20;
     const LEARNING_DECAY: f32 = 0.98;
     const LEARNING_WEIGHT: f32 = 14.0;
-    const CONGESTION_PENALTY: f32 = 8.0;
-    const CONGESTION_EXPONENT: f32 = 1.20;
-    const ROUTE_CONGESTION_DECAY: f32 = 0.94;
     const TRANSPORT_COST_PER_DISTANCE: f32 = 0.00012;
     const ISLAND_NEGLECT_BONUS_PER_TICK: f32 = 0.008;
     const ISLAND_NEGLECT_BONUS_CAP: f32 = 22.0;
@@ -35,9 +32,6 @@ async fn main() {
         learning_rate: LEARNING_RATE,
         learning_decay: LEARNING_DECAY,
         learning_weight: LEARNING_WEIGHT,
-        congestion_penalty: CONGESTION_PENALTY,
-        congestion_exponent: CONGESTION_EXPONENT,
-        route_congestion_decay: ROUTE_CONGESTION_DECAY,
         transport_cost_per_distance: TRANSPORT_COST_PER_DISTANCE,
         island_neglect_bonus_per_tick: ISLAND_NEGLECT_BONUS_PER_TICK,
         island_neglect_bonus_cap: ISLAND_NEGLECT_BONUS_CAP,

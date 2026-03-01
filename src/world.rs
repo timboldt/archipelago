@@ -3,14 +3,21 @@ use macroquad::prelude::*;
 use rayon::prelude::*;
 
 use crate::island::Island;
-use crate::ship::{DockAction, PlanningTuning, Ship};
+use crate::ship::{DockAction, LoadPlanningContext, PlanningTuning, Ship, STARTING_CASH};
 
 pub const WORLD_SIZE: f32 = 5000.0;
+const ROUTE_HISTORY_WINDOW_TICKS: usize = 10;
+const SCUTTLE_THRESHOLD_MULTIPLIER: f32 = 0.50;
+const BIRTH_THRESHOLD_MULTIPLIER: f32 = 5.0;
+const LIFECYCLE_CHECK_INTERVAL_TICKS: u64 = 30;
+const MUTATION_STRENGTH: f32 = 0.05;
 
 pub struct World {
     pub islands: Vec<Island>,
     pub ships: Vec<Ship>,
     recent_route_departures: Vec<Vec<f32>>,
+    route_departure_history: Vec<Vec<Vec<u16>>>,
+    route_history_cursor: usize,
     planning_tuning: PlanningTuning,
     tick: u64,
 }
@@ -48,6 +55,11 @@ impl World {
             islands,
             ships,
             recent_route_departures: vec![vec![0.0; num_islands]; num_islands],
+            route_departure_history: vec![
+                vec![vec![0; num_islands]; num_islands];
+                ROUTE_HISTORY_WINDOW_TICKS
+            ],
+            route_history_cursor: 0,
             planning_tuning: PlanningTuning::default(),
             tick: 0,
         }
@@ -59,17 +71,28 @@ impl World {
 
     pub fn update(&mut self, dt: f32) {
         self.tick = self.tick.saturating_add(1);
-        self.decay_route_departure_memory();
+        self.begin_route_history_tick();
         self.update_island_economy(dt);
         self.move_ships(dt);
         self.process_docked_ships();
+        self.route_history_cursor =
+            (self.route_history_cursor + 1) % ROUTE_HISTORY_WINDOW_TICKS;
+        if self.tick.is_multiple_of(LIFECYCLE_CHECK_INTERVAL_TICKS) {
+            self.evolve_fleet();
+        }
     }
 
-    fn decay_route_departure_memory(&mut self) {
-        let decay = self.planning_tuning.route_congestion_decay.clamp(0.0, 1.0);
-        for origin_row in &mut self.recent_route_departures {
-            for route_score in origin_row {
-                *route_score *= decay;
+    fn begin_route_history_tick(&mut self) {
+        let cursor = self.route_history_cursor;
+        for origin_id in 0..self.recent_route_departures.len() {
+            for target_id in 0..self.recent_route_departures[origin_id].len() {
+                let stale_count = self.route_departure_history[cursor][origin_id][target_id] as f32;
+                if stale_count > 0.0 {
+                    self.recent_route_departures[origin_id][target_id] =
+                        (self.recent_route_departures[origin_id][target_id] - stale_count)
+                            .max(0.0);
+                    self.route_departure_history[cursor][origin_id][target_id] = 0;
+                }
             }
         }
     }
@@ -117,11 +140,12 @@ impl World {
                 island.mark_seen(self.tick);
 
                 for &ship_idx in ship_indices {
-                    self.ships[ship_idx].begin_dock_tick(&self.planning_tuning);
+                    let ship_tuning = self.ships[ship_idx].effective_tuning(&self.planning_tuning);
+                    self.ships[ship_idx].begin_dock_tick(&ship_tuning);
                     let unload_action = self.ships[ship_idx].trade_unload_if_carrying(
                         island_id,
                         island,
-                        &self.planning_tuning,
+                        &ship_tuning,
                     );
                     if unload_action == DockAction::Sold {
                         sold_this_tick[ship_idx] = true;
@@ -131,12 +155,19 @@ impl World {
                 island.recompute_local_prices(self.tick);
 
                 for &ship_idx in ship_indices {
+                    let exclude = self.ships[ship_idx].just_sold_resource();
+                    let ship_tuning = self.ships[ship_idx].effective_tuning(&self.planning_tuning);
+                    let load_context = LoadPlanningContext {
+                        current_island_id: island_id,
+                        island_positions: &island_positions,
+                        current_tick: self.tick,
+                        tuning: &ship_tuning,
+                        outbound_recent_departures: &outbound_recent_departures,
+                    };
                     let _ = self.ships[ship_idx].trade_load_if_empty(
-                        island_id,
-                        &island_positions,
-                        self.tick,
-                        &self.planning_tuning,
                         island,
+                        exclude,
+                        &load_context,
                     );
                 }
 
@@ -144,12 +175,13 @@ impl World {
                     if sold_this_tick[ship_idx] {
                         continue;
                     }
+                    let ship_tuning = self.ships[ship_idx].effective_tuning(&self.planning_tuning);
                     self.ships[ship_idx].sync_ledgers_with_island(island);
                     if let Some(target_island_id) = self.ships[ship_idx].plan_next_island(
                         island_id,
                         &island_positions,
                         self.tick,
-                        &self.planning_tuning,
+                        &ship_tuning,
                         &outbound_recent_departures,
                     ) {
                         if target_island_id != island_id {
@@ -157,6 +189,16 @@ impl World {
                             if let Some(slot) = outbound_recent_departures.get_mut(target_island_id)
                             {
                                 *slot += 1.0;
+                            }
+                            if island_id < self.route_departure_history[self.route_history_cursor].len()
+                                && target_island_id
+                                    < self.route_departure_history[self.route_history_cursor]
+                                        [island_id]
+                                        .len()
+                            {
+                                let slot = &mut self.route_departure_history[self.route_history_cursor]
+                                    [island_id][target_island_id];
+                                *slot = slot.saturating_add(1);
                             }
                         }
                     }
@@ -172,6 +214,36 @@ impl World {
             let target_pos = self.islands[target_island_id].pos;
             self.ships[ship_idx].set_target(target_island_id, target_pos);
         }
+    }
+
+    fn evolve_fleet(&mut self) {
+        let scuttle_threshold = STARTING_CASH * SCUTTLE_THRESHOLD_MULTIPLIER;
+        let birth_threshold = STARTING_CASH * BIRTH_THRESHOLD_MULTIPLIER;
+        let mut rng = ::rand::thread_rng();
+
+        let mut scuttle_mask = vec![false; self.ships.len()];
+        let mut daughters: Vec<Ship> = Vec::new();
+
+        for (idx, ship) in self.ships.iter_mut().enumerate() {
+            if ship.cash < scuttle_threshold {
+                scuttle_mask[idx] = true;
+                continue;
+            }
+
+            if ship.cash >= birth_threshold {
+                if let Some(daughter) = ship.spawn_daughter(MUTATION_STRENGTH, &mut rng) {
+                    daughters.push(daughter);
+                }
+            }
+        }
+
+        let old_ships = std::mem::take(&mut self.ships);
+        self.ships = old_ships
+            .into_iter()
+            .enumerate()
+            .filter_map(|(idx, ship)| (!scuttle_mask[idx]).then_some(ship))
+            .collect();
+        self.ships.extend(daughters);
     }
 
     pub fn draw(&self) {
@@ -191,7 +263,7 @@ impl World {
         let panel_x = 14.0;
         let panel_y = 14.0;
         let panel_w = 180.0;
-        let panel_h = 146.0;
+        let panel_h = 166.0;
 
         draw_rectangle(
             panel_x,
@@ -221,6 +293,15 @@ impl World {
         let tuning_text = format!("Spec floor: {:.2}", self.planning_tuning.speculation_floor);
         draw_text(
             &tuning_text,
+            panel_x + 10.0,
+            panel_y + panel_h - 28.0,
+            18.0,
+            WHITE,
+        );
+
+        let ship_count_text = format!("Ships: {}", self.ships.len());
+        draw_text(
+            &ship_count_text,
             panel_x + 10.0,
             panel_y + panel_h - 10.0,
             18.0,
