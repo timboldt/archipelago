@@ -2,7 +2,7 @@ use ::rand::Rng;
 use macroquad::prelude::*;
 use strum::IntoEnumIterator;
 
-use crate::island::{Island, PriceEntry, PriceLedger, Resource, RESOURCE_COUNT};
+use crate::island::{BASE_COSTS, Island, PriceEntry, PriceLedger, Resource, RESOURCE_COUNT};
 
 const TRADE_LOT_SIZE: f32 = 16.0;
 pub const STARTING_CASH: f32 = 200.0;
@@ -19,6 +19,7 @@ pub struct PlanningTuning {
     pub transport_cost_per_distance: f32,
     pub island_neglect_bonus_per_tick: f32,
     pub island_neglect_bonus_cap: f32,
+    pub luxury_weight: f32,
 }
 
 pub struct LoadPlanningContext<'a> {
@@ -49,6 +50,7 @@ impl Default for PlanningTuning {
             transport_cost_per_distance: 0.0006,
             island_neglect_bonus_per_tick: 0.006,
             island_neglect_bonus_cap: 18.0,
+            luxury_weight: 0.12,
         }
     }
 }
@@ -77,6 +79,7 @@ pub struct StrategyGenes {
     speculation_floor_scale: f32,
     learning_weight_scale: f32,
     transport_cost_scale: f32,
+    luxury_weight_scale: f32,
 }
 
 impl Default for StrategyGenes {
@@ -86,6 +89,7 @@ impl Default for StrategyGenes {
             speculation_floor_scale: 1.0,
             learning_weight_scale: 1.0,
             transport_cost_scale: 1.0,
+            luxury_weight_scale: 1.0,
         }
     }
 }
@@ -155,6 +159,8 @@ impl Ship {
         tuned.transport_cost_per_distance =
             (tuned.transport_cost_per_distance * self.strategy_genes.transport_cost_scale)
                 .max(0.0);
+        tuned.luxury_weight = (tuned.luxury_weight * self.strategy_genes.luxury_weight_scale)
+            .clamp(-2.0, 2.0);
         tuned
     }
 
@@ -178,25 +184,40 @@ impl Ship {
         daughter.route_memory = self.route_memory.clone();
 
         daughter.strategy_genes = StrategyGenes {
-            confidence_decay_scale: mutate_gene(
+            confidence_decay_scale: mutate_gene_gaussian(
                 self.strategy_genes.confidence_decay_scale,
                 mutation_strength,
                 rng,
+                MIN_GENE_SCALE,
+                MAX_GENE_SCALE,
             ),
-            speculation_floor_scale: mutate_gene(
+            speculation_floor_scale: mutate_gene_gaussian(
                 self.strategy_genes.speculation_floor_scale,
                 mutation_strength,
                 rng,
+                MIN_GENE_SCALE,
+                MAX_GENE_SCALE,
             ),
-            learning_weight_scale: mutate_gene(
+            learning_weight_scale: mutate_gene_gaussian(
                 self.strategy_genes.learning_weight_scale,
                 mutation_strength,
                 rng,
+                MIN_GENE_SCALE,
+                MAX_GENE_SCALE,
             ),
-            transport_cost_scale: mutate_gene(
+            transport_cost_scale: mutate_gene_gaussian(
                 self.strategy_genes.transport_cost_scale,
                 mutation_strength,
                 rng,
+                MIN_GENE_SCALE,
+                MAX_GENE_SCALE,
+            ),
+            luxury_weight_scale: mutate_gene_gaussian(
+                self.strategy_genes.luxury_weight_scale,
+                mutation_strength,
+                rng,
+                MIN_GENE_SCALE,
+                MAX_GENE_SCALE,
             ),
         };
 
@@ -646,7 +667,12 @@ impl Ship {
         let neglect_bonus = (neglect_ticks * context.tuning.island_neglect_bonus_per_tick)
             .min(context.tuning.island_neglect_bonus_cap);
 
-        let utility = expected_profit - fuel_cost + neglect_bonus;
+        let average_base_cost = BASE_COSTS.iter().copied().sum::<f32>() / RESOURCE_COUNT as f32;
+        let lot_scale = (lot_size / TRADE_LOT_SIZE).clamp(0.25, 3.0);
+        let luxury_signal = (buy_price * lot_scale) - average_base_cost;
+        let luxury_bonus = context.tuning.luxury_weight * luxury_signal;
+
+        let utility = expected_profit - fuel_cost + neglect_bonus + luxury_bonus;
 
         (utility, confidence)
     }
@@ -694,7 +720,16 @@ impl Ship {
     }
 }
 
-fn mutate_gene(value: f32, mutation_strength: f32, rng: &mut impl Rng) -> f32 {
-    let delta = 1.0 + rng.gen_range(-mutation_strength..mutation_strength);
-    (value * delta).clamp(MIN_GENE_SCALE, MAX_GENE_SCALE)
+fn mutate_gene_gaussian(
+    value: f32,
+    mutation_strength: f32,
+    rng: &mut impl Rng,
+    min_value: f32,
+    max_value: f32,
+) -> f32 {
+    let sigma = mutation_strength.max(0.0001);
+    let u1: f32 = rng.gen_range(f32::EPSILON..1.0);
+    let u2: f32 = rng.gen_range(0.0..1.0);
+    let z0 = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos();
+    (value + z0 * sigma).clamp(min_value, max_value)
 }

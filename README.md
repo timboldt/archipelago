@@ -56,9 +56,11 @@ cargo +nightly fmt
 - **Outlier rescue:** Each actor gossips a `last_seen_tick` estimate per island through ledgers; stale/rarely seen islands receive a capped neglect bonus during planning.
 - **Anti-herding:** Planning applies a pheromone-style route signal over the last 10 ticks: if many ships recently left `A -> B`, confidence in `B`'s quoted prices is attenuated by approximately `1/N` for ships departing from `A`.
 - **Ship learning:** Each ship maintains a decaying destination memory updated by realized trade margins, and this memory biases future route utility.
-- **Lifecycle selection:** Fleet composition evolves over time: low-cash ships are retired, while wealthy docked ships split into daughter ships with small strategy mutations.
+- **Wealth tax / upkeep:** Every tick, each ship pays a tiny fixed maintenance cost from cash, so persistently unprofitable traders eventually fail the scuttle threshold and are replaced by fitter descendants.
+- **Lifecycle selection:** Fleet composition evolves over time: low-cash ships are retired, while wealthy docked ships split into daughter ships with small Gaussian strategy mutations.
+- **Trader phenotypes:** Mutated strategy genes now include risk tolerance (`confidence_decay_k` scaling: confident long-range vs cynical local traders) and a `luxury_weight` trait that biases utility toward higher-value cargo.
 - **Dock cadence:** Ships that sell on a tick stay docked for at least that tick (no immediate departure while empty), then can reload and depart on a following tick.
-- **Tuning controls:** `main.rs` exposes planning/speculation/learning constants (`confidence_decay_k`, `speculation_floor`, `speculation_staleness_scale`, `speculation_uncertainty_bonus`, `learning_rate`, `learning_decay`, `learning_weight`, `transport_cost_per_distance`, `island_neglect_bonus_per_tick`, `island_neglect_bonus_cap`) and applies them via `World::set_planning_tuning(...)`.
+- **Tuning controls:** `main.rs` exposes planning/speculation/learning constants (`confidence_decay_k`, `speculation_floor`, `speculation_staleness_scale`, `speculation_uncertainty_bonus`, `learning_rate`, `learning_decay`, `learning_weight`, `transport_cost_per_distance`, `island_neglect_bonus_per_tick`, `island_neglect_bonus_cap`, `luxury_weight`) and applies them via `World::set_planning_tuning(...)`.
 - **Live tuning:** Press `[` and `]` during runtime to decrease/increase `speculation_floor`.
 
 ## Tech Stack (Current)

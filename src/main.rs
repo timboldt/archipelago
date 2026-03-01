@@ -22,6 +22,7 @@ async fn main() {
     const TRANSPORT_COST_PER_DISTANCE: f32 = 0.00012;
     const ISLAND_NEGLECT_BONUS_PER_TICK: f32 = 0.008;
     const ISLAND_NEGLECT_BONUS_CAP: f32 = 22.0;
+    const LUXURY_WEIGHT: f32 = 0.12;
     const SPECULATION_STEP: f32 = 0.04;
 
     let mut planning_tuning = PlanningTuning {
@@ -35,6 +36,7 @@ async fn main() {
         transport_cost_per_distance: TRANSPORT_COST_PER_DISTANCE,
         island_neglect_bonus_per_tick: ISLAND_NEGLECT_BONUS_PER_TICK,
         island_neglect_bonus_cap: ISLAND_NEGLECT_BONUS_CAP,
+        luxury_weight: LUXURY_WEIGHT,
     };
 
     let mut world = World::new(NUM_ISLANDS, NUM_SHIPS);

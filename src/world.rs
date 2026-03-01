@@ -11,6 +11,7 @@ const SCUTTLE_THRESHOLD_MULTIPLIER: f32 = 0.50;
 const BIRTH_THRESHOLD_MULTIPLIER: f32 = 5.0;
 const LIFECYCLE_CHECK_INTERVAL_TICKS: u64 = 30;
 const MUTATION_STRENGTH: f32 = 0.05;
+const SHIP_MAINTENANCE_PER_TICK: f32 = 0.03;
 
 pub struct World {
     pub islands: Vec<Island>,
@@ -75,6 +76,7 @@ impl World {
         self.update_island_economy(dt);
         self.move_ships(dt);
         self.process_docked_ships();
+        self.apply_ship_maintenance();
         self.route_history_cursor =
             (self.route_history_cursor + 1) % ROUTE_HISTORY_WINDOW_TICKS;
         if self.tick.is_multiple_of(LIFECYCLE_CHECK_INTERVAL_TICKS) {
@@ -107,6 +109,12 @@ impl World {
     fn move_ships(&mut self, dt: f32) {
         for ship in &mut self.ships {
             let _ = ship.update(dt);
+        }
+    }
+
+    fn apply_ship_maintenance(&mut self) {
+        for ship in &mut self.ships {
+            ship.cash = (ship.cash - SHIP_MAINTENANCE_PER_TICK).max(0.0);
         }
     }
 
