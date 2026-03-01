@@ -15,6 +15,9 @@ pub struct PlanningTuning {
     pub learning_rate: f32,
     pub learning_decay: f32,
     pub learning_weight: f32,
+    pub congestion_penalty: f32,
+    pub congestion_exponent: f32,
+    pub route_congestion_decay: f32,
 }
 
 impl Default for PlanningTuning {
@@ -27,6 +30,9 @@ impl Default for PlanningTuning {
             learning_rate: 0.14,
             learning_decay: 0.98,
             learning_weight: 12.0,
+            congestion_penalty: 4.0,
+            congestion_exponent: 1.15,
+            route_congestion_decay: 0.94,
         }
     }
 }
@@ -196,6 +202,7 @@ impl Ship {
         island_positions: &[Vec2],
         current_tick: u64,
         tuning: &PlanningTuning,
+        outbound_recent_departures: &[f32],
     ) -> Option<usize> {
         let mut candidates: Vec<(usize, f32, f32)> = Vec::new();
         let mut best_target = None;
@@ -241,7 +248,18 @@ impl Ship {
 
             let learned_bias =
                 self.route_memory.get(target_id).copied().unwrap_or(0.0) * tuning.learning_weight;
-            let utility = utility + learned_bias;
+            let crowd_count = outbound_recent_departures
+                .get(target_id)
+                .copied()
+                .unwrap_or(0.0)
+                .max(0.0);
+            let congestion_cost = if crowd_count > 0.0 {
+                tuning.congestion_penalty * crowd_count.powf(tuning.congestion_exponent)
+            } else {
+                0.0
+            };
+
+            let utility = utility + learned_bias - congestion_cost;
 
             candidates.push((target_id, utility, confidence));
 
@@ -256,26 +274,56 @@ impl Ship {
             return best_target;
         }
 
+        let best_congestion = best_target
+            .and_then(|target_id| outbound_recent_departures.get(target_id).copied())
+            .unwrap_or(0.0)
+            .max(0.0);
+        let congestion_boost = (best_congestion * 0.03).min(0.20);
+
         let speculation_chance = (tuning.speculation_floor
-            + (1.0 - best_confidence) * tuning.speculation_staleness_scale)
-            .clamp(tuning.speculation_floor, 0.60);
+            + (1.0 - best_confidence) * tuning.speculation_staleness_scale
+            + congestion_boost)
+            .clamp(tuning.speculation_floor, 0.85);
 
         let mut rng = ::rand::thread_rng();
         if rng.gen_bool(speculation_chance as f64) {
-            let mut speculative_target = best_target;
-            let mut speculative_score = f32::NEG_INFINITY;
+            let mut scored: Vec<(usize, f32)> = candidates
+                .into_iter()
+                .map(|(target_id, utility, confidence)| {
+                    let uncertainty_bonus =
+                        (1.0 - confidence) * tuning.speculation_uncertainty_bonus;
+                    (target_id, utility + uncertainty_bonus)
+                })
+                .collect();
 
-            for (target_id, utility, confidence) in candidates {
-                let noise = rng.gen_range(-2.0..2.0);
-                let score =
-                    utility + (1.0 - confidence) * tuning.speculation_uncertainty_bonus + noise;
-                if score > speculative_score {
-                    speculative_score = score;
-                    speculative_target = Some(target_id);
+            scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+            let top_k = scored.len().min(3);
+            if top_k == 0 {
+                return best_target;
+            }
+
+            let top_slice = &scored[..top_k];
+            let temperature = (1.0 + tuning.speculation_uncertainty_bonus * 0.05).max(0.1);
+            let best_score = top_slice[0].1;
+
+            let mut weighted_sum = 0.0_f32;
+            let mut weighted: Vec<(usize, f32)> = Vec::with_capacity(top_k);
+            for (target_id, score) in top_slice.iter().copied() {
+                let stabilized = ((score - best_score) / temperature).exp().max(0.001);
+                weighted_sum += stabilized;
+                weighted.push((target_id, stabilized));
+            }
+
+            let mut draw = rng.gen_range(0.0..weighted_sum.max(0.001));
+            for (target_id, weight) in weighted {
+                draw -= weight;
+                if draw <= 0.0 {
+                    return Some(target_id);
                 }
             }
 
-            return speculative_target;
+            return Some(top_slice[0].0);
         }
 
         best_target

@@ -13,13 +13,16 @@ async fn main() {
     const NUM_SHIPS: usize = 100;
 
     const CONFIDENCE_DECAY_K: f32 = 0.003;
-    const SPECULATION_FLOOR: f32 = 0.18;
+    const SPECULATION_FLOOR: f32 = 0.40;
     const SPECULATION_STALENESS_SCALE: f32 = 0.50;
     const SPECULATION_UNCERTAINTY_BONUS: f32 = 14.0;
     const LEARNING_RATE: f32 = 0.20;
     const LEARNING_DECAY: f32 = 0.98;
     const LEARNING_WEIGHT: f32 = 14.0;
-    const SPECULATION_STEP: f32 = 0.02;
+    const CONGESTION_PENALTY: f32 = 8.0;
+    const CONGESTION_EXPONENT: f32 = 1.20;
+    const ROUTE_CONGESTION_DECAY: f32 = 0.94;
+    const SPECULATION_STEP: f32 = 0.04;
 
     let mut planning_tuning = PlanningTuning {
         confidence_decay_k: CONFIDENCE_DECAY_K,
@@ -29,6 +32,9 @@ async fn main() {
         learning_rate: LEARNING_RATE,
         learning_decay: LEARNING_DECAY,
         learning_weight: LEARNING_WEIGHT,
+        congestion_penalty: CONGESTION_PENALTY,
+        congestion_exponent: CONGESTION_EXPONENT,
+        route_congestion_decay: ROUTE_CONGESTION_DECAY,
     };
 
     let mut world = World::new(NUM_ISLANDS, NUM_SHIPS);

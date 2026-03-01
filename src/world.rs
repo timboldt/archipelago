@@ -9,6 +9,7 @@ pub const WORLD_SIZE: f32 = 5000.0;
 pub struct World {
     pub islands: Vec<Island>,
     pub ships: Vec<Ship>,
+    recent_route_departures: Vec<Vec<f32>>,
     planning_tuning: PlanningTuning,
     tick: u64,
 }
@@ -45,6 +46,7 @@ impl World {
         Self {
             islands,
             ships,
+            recent_route_departures: vec![vec![0.0; num_islands]; num_islands],
             planning_tuning: PlanningTuning::default(),
             tick: 0,
         }
@@ -56,9 +58,19 @@ impl World {
 
     pub fn update(&mut self, dt: f32) {
         self.tick = self.tick.saturating_add(1);
+        self.decay_route_departure_memory();
         self.update_island_economy(dt);
         self.move_ships(dt);
         self.process_docked_ships();
+    }
+
+    fn decay_route_departure_memory(&mut self) {
+        let decay = self.planning_tuning.route_congestion_decay.clamp(0.0, 1.0);
+        for origin_row in &mut self.recent_route_departures {
+            for route_score in origin_row {
+                *route_score *= decay;
+            }
+        }
     }
 
     fn update_island_economy(&mut self, dt: f32) {
@@ -92,6 +104,12 @@ impl World {
                 continue;
             }
 
+            let mut outbound_recent_departures = self
+                .recent_route_departures
+                .get(island_id)
+                .cloned()
+                .unwrap_or_else(|| vec![0.0; self.islands.len()]);
+
             {
                 let island = &mut self.islands[island_id];
 
@@ -123,12 +141,21 @@ impl World {
                         &island_positions,
                         self.tick,
                         &self.planning_tuning,
+                        &outbound_recent_departures,
                     ) {
                         if target_island_id != island_id {
                             departure_orders.push((ship_idx, target_island_id));
+                            if let Some(slot) = outbound_recent_departures.get_mut(target_island_id)
+                            {
+                                *slot += 1.0;
+                            }
                         }
                     }
                 }
+            }
+
+            if island_id < self.recent_route_departures.len() {
+                self.recent_route_departures[island_id] = outbound_recent_departures;
             }
         }
 
