@@ -284,8 +284,21 @@ impl World {
     pub fn draw_ui(&self) {
         let panel_x = 14.0;
         let panel_y = 14.0;
-        let panel_w = 180.0;
-        let panel_h = 166.0;
+        let panel_w = 260.0;
+        let panel_h = 238.0;
+
+        let mut total_inventory = [0.0_f32; 4];
+        let mut total_population = 0.0_f32;
+        let mut total_cash = 0.0_f32;
+        let mut total_infrastructure = 0.0_f32;
+        for island in &self.islands {
+            for (idx, slot) in total_inventory.iter_mut().enumerate() {
+                *slot += island.inventory[idx].max(0.0);
+            }
+            total_population += island.population.max(0.0);
+            total_cash += island.cash.max(0.0);
+            total_infrastructure += island.infrastructure_level.max(0.0);
+        }
 
         draw_rectangle(
             panel_x,
@@ -309,23 +322,49 @@ impl World {
             let y = panel_y + 42.0 + i as f32 * 16.0;
             draw_rectangle(panel_x + 10.0, y - 10.0, 10.0, 10.0, *color);
             draw_rectangle_lines(panel_x + 10.0, y - 10.0, 10.0, 10.0, 1.0, GRAY);
-            draw_text(label, panel_x + 28.0, y, 18.0, WHITE);
+            if i < 4 {
+                let counter = format!("{}: {:.0}", label, total_inventory[i]);
+                draw_text(&counter, panel_x + 28.0, y, 18.0, WHITE);
+            } else {
+                draw_text(label, panel_x + 28.0, y, 18.0, WHITE);
+            }
         }
 
-        let tuning_text = format!("Spec floor: {:.2}", self.planning_tuning.speculation_floor);
+        let avg_infrastructure = if self.islands.is_empty() {
+            0.0
+        } else {
+            total_infrastructure / self.islands.len() as f32
+        };
+        let tools_per_1k_pop = if total_population > 0.0 {
+            total_inventory[3] * 1000.0 / total_population
+        } else {
+            0.0
+        };
+
+        let pop_text = format!("Population: {:.0}", total_population);
+        let cash_text = format!("Cash: {:.0}", total_cash);
+        let infra_text = format!("Industry: {:.2}", avg_infrastructure);
+        let tools_pop_text = format!("Tools / 1k pop: {:.2}", tools_per_1k_pop);
+        let carry_cost_text = format!(
+            "Carry cost: {:.4}",
+            self.planning_tuning.capital_carry_cost_per_time
+        );
+        let ship_count_text = format!("Ships: {}", self.ships.len());
+        draw_text(&pop_text, panel_x + 10.0, panel_y + 136.0, 18.0, WHITE);
+        draw_text(&cash_text, panel_x + 10.0, panel_y + 154.0, 18.0, WHITE);
+        draw_text(&infra_text, panel_x + 10.0, panel_y + 172.0, 18.0, WHITE);
         draw_text(
-            &tuning_text,
+            &tools_pop_text,
             panel_x + 10.0,
-            panel_y + panel_h - 28.0,
+            panel_y + 190.0,
             18.0,
             WHITE,
         );
-
-        let ship_count_text = format!("Ships: {}", self.ships.len());
+        draw_text(&carry_cost_text, panel_x + 10.0, panel_y + 208.0, 18.0, WHITE);
         draw_text(
             &ship_count_text,
             panel_x + 10.0,
-            panel_y + panel_h - 10.0,
+            panel_y + 226.0,
             18.0,
             WHITE,
         );

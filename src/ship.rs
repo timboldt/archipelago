@@ -17,6 +17,8 @@ const BROKE_CASH_COVERAGE_RATIO: f32 = 0.35;
 const INDUSTRIAL_INFRA_THRESHOLD: f32 = 1.5;
 const INDUSTRIAL_INPUT_BONUS_PER_INFRA: f32 = 4.0;
 const INDUSTRIAL_INPUT_BONUS_CAP: f32 = 14.0;
+const DEFAULT_CAPITAL_CARRY_COST_PER_TIME: f32 = 0.0020;
+const HIGH_PRICE_RISK_WEIGHT: f32 = 0.65;
 
 #[derive(Clone, Copy, Debug)]
 pub struct PlanningTuning {
@@ -28,9 +30,9 @@ pub struct PlanningTuning {
     pub learning_decay: f32,
     pub learning_weight: f32,
     pub transport_cost_per_distance: f32,
+    pub capital_carry_cost_per_time: f32,
     pub island_neglect_bonus_per_tick: f32,
     pub island_neglect_bonus_cap: f32,
-    pub luxury_weight: f32,
 }
 
 pub struct LoadPlanningContext<'a> {
@@ -59,9 +61,9 @@ impl Default for PlanningTuning {
             learning_decay: 0.98,
             learning_weight: 12.0,
             transport_cost_per_distance: 0.0006,
+            capital_carry_cost_per_time: DEFAULT_CAPITAL_CARRY_COST_PER_TIME,
             island_neglect_bonus_per_tick: 0.006,
             island_neglect_bonus_cap: 18.0,
-            luxury_weight: 0.12,
         }
     }
 }
@@ -90,7 +92,6 @@ pub struct StrategyGenes {
     speculation_floor_scale: f32,
     learning_weight_scale: f32,
     transport_cost_scale: f32,
-    luxury_weight_scale: f32,
 }
 
 impl Default for StrategyGenes {
@@ -100,7 +101,6 @@ impl Default for StrategyGenes {
             speculation_floor_scale: 1.0,
             learning_weight_scale: 1.0,
             transport_cost_scale: 1.0,
-            luxury_weight_scale: 1.0,
         }
     }
 }
@@ -173,8 +173,7 @@ impl Ship {
             (tuned.learning_weight * self.strategy_genes.learning_weight_scale).max(0.0);
         tuned.transport_cost_per_distance =
             (tuned.transport_cost_per_distance * self.strategy_genes.transport_cost_scale).max(0.0);
-        tuned.luxury_weight =
-            (tuned.luxury_weight * self.strategy_genes.luxury_weight_scale).clamp(-2.0, 2.0);
+        tuned.capital_carry_cost_per_time = tuned.capital_carry_cost_per_time.max(0.0);
         tuned
     }
 
@@ -217,13 +216,6 @@ impl Ship {
             ),
             transport_cost_scale: mutate_gene_gaussian(
                 self.strategy_genes.transport_cost_scale,
-                mutation_strength,
-                rng,
-                MIN_GENE_SCALE,
-                MAX_GENE_SCALE,
-            ),
-            luxury_weight_scale: mutate_gene_gaussian(
-                self.strategy_genes.luxury_weight_scale,
                 mutation_strength,
                 rng,
                 MIN_GENE_SCALE,
@@ -817,6 +809,7 @@ impl Ship {
         };
 
         let distance = (self.pos - context.island_positions[target_id]).length();
+        let transit_time = distance / self.speed.max(1.0);
         let mut confidence = self.destination_confidence(
             target_id,
             distance,
@@ -850,8 +843,17 @@ impl Ship {
         let gross_expected_revenue = expected_sell_price * effective_lot_size;
         let real_expected_revenue = gross_expected_revenue.min(market_depth_cash * 0.9);
         let real_expected_profit = real_expected_revenue - (buy_price * effective_lot_size);
+
+        let average_base_cost = BASE_COSTS.iter().copied().sum::<f32>() / RESOURCE_COUNT as f32;
+        let relative_price = (buy_price / average_base_cost).max(0.0);
+        let price_risk_penalty = (relative_price - 1.0).max(0.0) * HIGH_PRICE_RISK_WEIGHT;
+        let price_risk_factor = (1.0 / (1.0 + price_risk_penalty)).clamp(0.35, 1.0);
+        confidence *= price_risk_factor;
+
         let expected_profit = real_expected_profit * confidence;
         let fuel_cost = distance * context.tuning.transport_cost_per_distance;
+        let capital_carry_cost =
+            buy_price * effective_lot_size * transit_time * context.tuning.capital_carry_cost_per_time;
 
         let data_age = context
             .current_tick
@@ -869,11 +871,6 @@ impl Ship {
         let neglect_bonus = (neglect_ticks * context.tuning.island_neglect_bonus_per_tick)
             .min(context.tuning.island_neglect_bonus_cap);
 
-        let average_base_cost = BASE_COSTS.iter().copied().sum::<f32>() / RESOURCE_COUNT as f32;
-        let lot_scale = (effective_lot_size / TRADE_LOT_SIZE).clamp(0.25, 3.0);
-        let luxury_signal = (buy_price * lot_scale) - average_base_cost;
-        let luxury_bonus = context.tuning.luxury_weight * luxury_signal;
-
         let industrial_bonus = if resource == Resource::Iron || resource == Resource::Timber {
             let infra_excess =
                 (self.ledger[target_id].infrastructure_level - INDUSTRIAL_INFRA_THRESHOLD)
@@ -883,7 +880,8 @@ impl Ship {
             0.0
         };
 
-        let utility = expected_profit - fuel_cost + neglect_bonus + luxury_bonus + industrial_bonus
+        let utility = expected_profit - fuel_cost - capital_carry_cost
+            + neglect_bonus + industrial_bonus
             - broke_penalty;
 
         (utility, confidence)

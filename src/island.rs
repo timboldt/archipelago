@@ -21,14 +21,21 @@ const GRAIN_PER_CAPITA_STABILITY: f32 = 0.07;
 const POPULATION_FLOOR_EPSILON: f32 = 0.05;
 const GRAIN_SURVIVAL_PRODUCTION_FLOOR: f32 = 1.8;
 const SURVIVAL_NON_GRAIN_TO_GRAIN_RATIO: f32 = 0.55;
-const TOOL_FABRICATION_BASE_RATE: f32 = 0.45;
+const TOOL_FABRICATION_BASE_RATE: f32 = 0.55;
 const GRAIN_EXTRACTION_BONUS: f32 = 1.35;
 const TIMBER_EXTRACTION_BONUS: f32 = 1.25;
 const TOOL_IRON_PER_BATCH: f32 = 1.35;
 const TOOL_TIMBER_PER_BATCH: f32 = 1.0;
-const TOOL_OUTPUT_PER_BATCH: f32 = 2.1;
-const PER_CAPITA_CASH_GENERATION: f32 = 0.22;
-const INDUSTRIAL_CASH_GENERATION: f32 = 0.18;
+const TOOL_OUTPUT_PER_BATCH: f32 = 2.6;
+const TARGET_TOOLS_PER_1K_POP: f32 = 80.0;
+const TOOL_FABRICATOR_ADAPTIVE_GAIN: f32 = 1.4;
+const TOOL_FABRICATOR_ADAPTIVE_CAP: f32 = 3.0;
+const PER_CAPITA_CASH_GENERATION: f32 = 0.05;
+const INDUSTRIAL_CASH_GENERATION: f32 = 0.30;
+const POPULATION_CASH_UPKEEP: f32 = 0.035;
+const INFRASTRUCTURE_CASH_UPKEEP: f32 = 0.55;
+const TOOLS_CONSUMPTION_SCALE: f32 = 0.03;
+const INDUSTRIAL_LABOR_SCALING: f32 = 0.012;
 const SCARCITY_LOG_SCALE: f32 = 2.4;
 const SCARCITY_REFERENCE: f32 = 120.0;
 const SPECIALIZATION_ZERO_PROBABILITY: f32 = 0.20;
@@ -36,9 +43,9 @@ const FOCUS_PRODUCTION_BOOST: f32 = 1.9;
 const NON_FOCUS_PRODUCTION_SCALE: f32 = 0.78;
 const TOOLS_PRODUCTIVITY_CAP: f32 = 2.0;
 const TOOLS_PRODUCTIVITY_SCALE: f32 = 0.22;
-const CAPITAL_INVESTMENT_THRESHOLD: f32 = 2200.0;
+const CAPITAL_INVESTMENT_THRESHOLD: f32 = 1600.0;
 const CAPITAL_INVESTMENT_RATE: f32 = 0.06;
-const INFRASTRUCTURE_INVESTMENT_EFFICIENCY: f32 = 0.00016;
+const INFRASTRUCTURE_INVESTMENT_EFFICIENCY: f32 = 0.00032;
 const MAX_INFRASTRUCTURE_LEVEL: f32 = 3.5;
 const POPULATION_DISPLAY_SCALE: f32 = 150.0;
 const CASH_DISPLAY_SCALE: f32 = 800.0;
@@ -210,7 +217,12 @@ impl Island {
             }
 
             let demand = self.consumption_rates[index] * self.population * dt;
-            self.inventory[index] -= demand;
+            let effective_demand = if resource == Resource::Tools {
+                demand * TOOLS_CONSUMPTION_SCALE
+            } else {
+                demand
+            };
+            self.inventory[index] -= effective_demand;
             self.inventory[index] = self.inventory[index].max(0.0);
         }
 
@@ -218,7 +230,24 @@ impl Island {
         let timber_idx = Resource::Timber.idx();
         let tools_idx = Resource::Tools.idx();
 
-        let industrial_rate = TOOL_FABRICATION_BASE_RATE * self.infrastructure_level * dt;
+        let labor_multiplier = (self.population * INDUSTRIAL_LABOR_SCALING).clamp(0.25, 8.0);
+        let local_tools_per_1k_pop = if self.population > 0.0 {
+            self.inventory[tools_idx] * 1000.0 / self.population
+        } else {
+            TARGET_TOOLS_PER_1K_POP
+        };
+        let tool_shortfall_ratio =
+            ((TARGET_TOOLS_PER_1K_POP - local_tools_per_1k_pop) / TARGET_TOOLS_PER_1K_POP)
+                .max(0.0);
+        let adaptive_tool_boost =
+            (1.0 + tool_shortfall_ratio * TOOL_FABRICATOR_ADAPTIVE_GAIN)
+                .clamp(1.0, TOOL_FABRICATOR_ADAPTIVE_CAP);
+
+        let industrial_rate = TOOL_FABRICATION_BASE_RATE
+            * self.infrastructure_level
+            * labor_multiplier
+            * adaptive_tool_boost
+            * dt;
         let feasible_batch = (self.inventory[iron_idx] / TOOL_IRON_PER_BATCH)
             .min(self.inventory[timber_idx] / TOOL_TIMBER_PER_BATCH)
             .min(industrial_rate)
@@ -233,6 +262,11 @@ impl Island {
             + feasible_batch * INDUSTRIAL_CASH_GENERATION)
             * dt;
         self.cash += local_economic_income.max(0.0);
+
+        let operating_cost =
+            (self.population * POPULATION_CASH_UPKEEP + self.infrastructure_level * INFRASTRUCTURE_CASH_UPKEEP)
+                * dt;
+        self.cash = (self.cash - operating_cost).max(0.0);
 
         if self.cash > CAPITAL_INVESTMENT_THRESHOLD {
             let excess_capital = self.cash - CAPITAL_INVESTMENT_THRESHOLD;

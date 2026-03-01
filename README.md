@@ -42,7 +42,9 @@ cargo +nightly fmt
 - **Island status bars:** Each island chart now includes three horizontal bars beneath it for Population, Cash, and Infrastructure.
 - **Chart readability:** Island chart dimensions are scaled from current view units-per-pixel so bars stay legible across zoom/viewport changes.
 - **UI legend:** A fixed top-left legend maps resource colors (and empty ships) for quick visual decoding.
-- **Tuning HUD:** The same panel shows the live `speculation_floor` value.
+- **Legend counters:** The legend now shows total archipelago inventory beside each resource label.
+- **Macro counters:** The same panel also shows global Population, global Cash, average Industry (infrastructure level), and a `Tools / 1k pop` health ratio.
+- **Tuning HUD:** The same panel shows live `capital_carry_cost_per_time`.
 - **Fleet HUD:** The panel also shows the current ship count.
 - **Resources:** Grain, Timber, Iron, Tools.
 - **Prices:** Island-local with a damped scarcity curve (log-shaped pressure) to avoid extreme low-inventory spikes.
@@ -50,8 +52,11 @@ cargo +nightly fmt
 - **Population engine:** Islands now track `population` with a smooth (non-binary) grain-balance response curve; grain abundance supports growth while scarcity increases shrink pressure gradually.
 - **Production dynamics:** Tier-1 goods (Grain, Timber, Iron) are labor-driven and scale with population (plus logistic damping), so larger islands produce and consume more.
 - **Differentiated consumption:** Grain is the dominant population sink, Tools are moderate/durable, and Timber/Iron passive consumption is low so industrial inputs can accumulate.
+- **Tool durability:** Tool demand is explicitly down-scaled relative to other goods to avoid consuming tools faster than the manufacturing system can replenish them.
 - **Tier-2 industry:** Tools are manufactured (not passively extracted) by converting Timber + Iron, scaled by island `infrastructure_level`, creating potential industrial hubs.
-- **Industrial throughput:** Tool fabrication base rate is increased (`0.45`) to reduce persistent tools scarcity.
+- **Industrial scaling:** Tool fabrication now scales with both infrastructure and available labor (population), so growing islands can expand manufacturing throughput.
+- **Adaptive controller:** Islands apply a capped fabrication boost when local `Tools / 1k pop` falls below a target floor, helping prevent long-run tool collapse.
+- **Industrial throughput:** Tool fabrication base rate is increased (`0.55`) and output per batch is higher, improving tool replenishment under population growth.
 - **Supply-chain rebalance:** Timber extraction is now biased higher than iron extraction, and tool fabrication consumes more iron per batch while producing more tools, which helps drain iron gluts and raise tool availability.
 - **Comparative advantage:** Islands are now initialized with partial resource scarcity (including forced-zero extraction in some resources) and a boosted focus resource, creating stronger specialization and trade dependency.
 - **Specialization tuning:** Timber/Iron zero-production probability is reduced to `0.20` to preserve baseline raw-material flow while still allowing specialization.
@@ -59,12 +64,14 @@ cargo +nightly fmt
 - **Tools as multiplier:** Tool stock boosts raw extraction productivity up to a cap, creating industrial demand for tools beyond pure arbitrage.
 - **Island capital:** Islands now carry finite `cash`; they can only buy from ships up to affordability, and earn cash when ships purchase local inventory.
 - **Liquidity stabilization:** Islands also generate modest endogenous cash from population activity and industrial throughput to avoid system-wide insolvency cascades.
-- **Capital sink:** Cash-rich islands automatically reinvest part of excess capital into infrastructure growth, reducing runaway cash hoarding.
+- **Operating costs:** Islands pay ongoing population/infrastructure upkeep, providing a continuous cash sink that limits runaway monetary growth.
+- **Capital sink:** Cash-rich islands reinvest excess capital into infrastructure growth with a lower trigger threshold and higher conversion efficiency, feeding industrial capacity sooner.
 - **Transport cost:** Cargo accrues freight cost while traveling; planning accounts for projected freight and realized P&L applies a capped freight deduction.
 - **Pair-based load selection:** Empty ships score full `(local resource -> destination island)` pairs and buy the resource from the best pair, rather than picking the cheapest local good first.
 - **Anti-roundtrip guard:** A ship will not immediately reload the same resource it just sold in the same dock cycle.
 - **Information flow:** Price ledgers are merged only during ship-island docking interactions.
 - **Planning:** Route selection uses an expected-value utility (`(expected unit margin × lot size × confidence) - fuel cost`) with confidence decay from data staleness + transit latency, plus probabilistic speculation for route diversity.
+- **Capital carry cost:** Utility now includes a transit-time capital lock-up penalty and high-price risk attenuation, reducing over-selection of expensive cargo when long-haul uncertainty is high.
 - **Liquidity-aware planning:** Ship ledgers now gossip destination `cash`, and route utility caps expected revenue by known market depth so traders avoid chasing phantom high prices at bankrupt islands.
 - **Storage-aware planning:** Ship ledgers also gossip inventory snapshots; utility discounts destination demand by available storage headroom so traders avoid over-delivering into saturated markets.
 - **Industrial routing bonus:** Ledgers also gossip destination infrastructure level; ships add a proportional utility bonus for delivering Iron/Timber to higher-infrastructure islands (above a threshold).
@@ -79,10 +86,10 @@ cargo +nightly fmt
 - **Ship learning:** Each ship maintains a decaying destination memory updated by realized trade margins, and this memory biases future route utility.
 - **Wealth tax / upkeep:** Every tick, each ship pays a tiny fixed maintenance cost from cash, so persistently unprofitable traders eventually fail the scuttle threshold and are replaced by fitter descendants without collapsing the whole fleet.
 - **Lifecycle selection:** Fleet composition evolves over time: low-cash ships are retired, while wealthy docked ships split into daughter ships with small Gaussian strategy mutations.
-- **Trader phenotypes:** Mutated strategy genes now include risk tolerance (`confidence_decay_k` scaling: confident long-range vs cynical local traders) and a `luxury_weight` trait that biases utility toward higher-value cargo.
+- **Trader phenotypes:** Mutated strategy genes now include risk tolerance (`confidence_decay_k` scaling: confident long-range vs cynical local traders).
 - **Dock cadence:** Ships that sell on a tick stay docked for at least that tick (no immediate departure while empty), then can reload and depart on a following tick.
-- **Tuning controls:** `main.rs` exposes planning/speculation/learning constants (`confidence_decay_k`, `speculation_floor`, `speculation_staleness_scale`, `speculation_uncertainty_bonus`, `learning_rate`, `learning_decay`, `learning_weight`, `transport_cost_per_distance`, `island_neglect_bonus_per_tick`, `island_neglect_bonus_cap`, `luxury_weight`) and applies them via `World::set_planning_tuning(...)`.
-- **Live tuning:** Press `[` and `]` during runtime to decrease/increase `speculation_floor`.
+- **Tuning controls:** `main.rs` exposes planning/speculation/learning constants (`confidence_decay_k`, `speculation_floor`, `speculation_staleness_scale`, `speculation_uncertainty_bonus`, `learning_rate`, `learning_decay`, `learning_weight`, `transport_cost_per_distance`, `capital_carry_cost_per_time`, `island_neglect_bonus_per_tick`, `island_neglect_bonus_cap`) and applies them via `World::set_planning_tuning(...)`.
+- **Live tuning:** Press `[` and `]` during runtime to decrease/increase `capital_carry_cost_per_time`.
 
 ## Tech Stack (Current)
 

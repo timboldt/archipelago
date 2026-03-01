@@ -20,10 +20,10 @@ async fn main() {
     const LEARNING_DECAY: f32 = 0.98;
     const LEARNING_WEIGHT: f32 = 14.0;
     const TRANSPORT_COST_PER_DISTANCE: f32 = 0.00012;
+    const CAPITAL_CARRY_COST_PER_TIME: f32 = 0.0020;
     const ISLAND_NEGLECT_BONUS_PER_TICK: f32 = 0.008;
     const ISLAND_NEGLECT_BONUS_CAP: f32 = 22.0;
-    const LUXURY_WEIGHT: f32 = 0.12;
-    const SPECULATION_STEP: f32 = 0.04;
+    const CAPITAL_CARRY_COST_STEP: f32 = 0.0002;
 
     let mut planning_tuning = PlanningTuning {
         confidence_decay_k: CONFIDENCE_DECAY_K,
@@ -34,9 +34,9 @@ async fn main() {
         learning_decay: LEARNING_DECAY,
         learning_weight: LEARNING_WEIGHT,
         transport_cost_per_distance: TRANSPORT_COST_PER_DISTANCE,
+        capital_carry_cost_per_time: CAPITAL_CARRY_COST_PER_TIME,
         island_neglect_bonus_per_tick: ISLAND_NEGLECT_BONUS_PER_TICK,
         island_neglect_bonus_cap: ISLAND_NEGLECT_BONUS_CAP,
-        luxury_weight: LUXURY_WEIGHT,
     };
 
     let mut world = World::new(NUM_ISLANDS, NUM_SHIPS);
@@ -45,13 +45,15 @@ async fn main() {
     loop {
         let mut tuning_changed = false;
         if is_key_pressed(KeyCode::LeftBracket) {
-            planning_tuning.speculation_floor =
-                (planning_tuning.speculation_floor - SPECULATION_STEP).clamp(0.01, 0.60);
+            planning_tuning.capital_carry_cost_per_time =
+                (planning_tuning.capital_carry_cost_per_time - CAPITAL_CARRY_COST_STEP)
+                    .clamp(0.0, 0.01);
             tuning_changed = true;
         }
         if is_key_pressed(KeyCode::RightBracket) {
-            planning_tuning.speculation_floor =
-                (planning_tuning.speculation_floor + SPECULATION_STEP).clamp(0.01, 0.60);
+            planning_tuning.capital_carry_cost_per_time =
+                (planning_tuning.capital_carry_cost_per_time + CAPITAL_CARRY_COST_STEP)
+                    .clamp(0.0, 0.01);
             tuning_changed = true;
         }
         if tuning_changed {
