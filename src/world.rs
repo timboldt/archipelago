@@ -1,5 +1,6 @@
 use ::rand::Rng;
 use macroquad::prelude::*;
+use rayon::prelude::*;
 
 use crate::island::Island;
 use crate::ship::{DockAction, PlanningTuning, Ship};
@@ -74,9 +75,10 @@ impl World {
     }
 
     fn update_island_economy(&mut self, dt: f32) {
-        for island in &mut self.islands {
-            island.produce_consume_and_price(dt, self.tick);
-        }
+        let tick = self.tick;
+        self.islands
+            .par_iter_mut()
+            .for_each(|island| island.produce_consume_and_price(dt, tick));
     }
 
     fn move_ships(&mut self, dt: f32) {

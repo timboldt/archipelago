@@ -44,6 +44,7 @@ cargo +nightly fmt
 - **Tuning HUD:** The same panel shows the live `speculation_floor` value.
 - **Resources:** Grain, Timber, Iron, Tools.
 - **Prices:** Island-local, inventory-driven (`base_cost / (inventory + 1.0)`).
+- **Production dynamics:** Island production is damped by a logistic factor as inventory approaches a carrying capacity, reducing runaway growth and oscillation.
 - **Transport cost:** Cargo accrues freight cost while traveling; planning accounts for projected freight and realized P&L applies a capped freight deduction.
 - **Load selection:** Empty ships choose cargo by expected net margin (confidence-weighted destination spread minus transport cost), not just lowest local price.
 - **Information flow:** Price ledgers are merged only during ship-island docking interactions.
@@ -61,9 +62,10 @@ cargo +nightly fmt
 - **Language:** Rust (edition 2021)
 - **Visualization/Input:** `macroquad`
 - **Randomization:** `rand`
+- **Parallelism:** `rayon` (island economy update phase)
 - **Enum utilities:** `strum` + `strum_macros`
 
 ## Near-Term Roadmap
 
 - Improve trade sizing and utility scoring.
-- Introduce parallel updates (`rayon`) for island and ship phases.
+- Extend parallel updates to additional phases where data dependencies allow.

@@ -5,6 +5,7 @@ use strum_macros::EnumIter;
 
 pub const RESOURCE_COUNT: usize = 4;
 pub const BASE_COSTS: [f32; RESOURCE_COUNT] = [20.0, 30.0, 45.0, 70.0];
+const INVENTORY_CARRYING_CAPACITY: f32 = 180.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, EnumIter)]
 #[repr(usize)]
@@ -79,7 +80,10 @@ impl Island {
     pub fn produce_consume_and_price(&mut self, dt: f32, tick: u64) {
         for resource in Resource::iter() {
             let index = resource.idx();
-            self.inventory[index] += self.production_rates[index] * dt;
+            let inventory = self.inventory[index];
+            let logistic_factor =
+                (1.0 - (inventory / INVENTORY_CARRYING_CAPACITY)).clamp(0.0, 1.0);
+            self.inventory[index] += self.production_rates[index] * logistic_factor * dt;
             self.inventory[index] -= self.consumption_rates[index] * dt;
             self.inventory[index] = self.inventory[index].max(0.0);
         }
@@ -128,6 +132,9 @@ impl Island {
     pub fn merge_ledger(&mut self, incoming: &PriceLedger) {
         let len = self.ledger.len().min(incoming.len());
         for (i, incoming_entry) in incoming.iter().copied().enumerate().take(len) {
+            if i == self.id {
+                continue;
+            }
             if incoming_entry.tick_updated > self.ledger[i].tick_updated {
                 self.ledger[i].prices = incoming_entry.prices;
                 self.ledger[i].tick_updated = incoming_entry.tick_updated;
