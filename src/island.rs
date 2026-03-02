@@ -551,4 +551,36 @@ impl Island {
             ORANGE,
         );
     }
+
+    pub fn draw_selection_border(&self, world_units_per_pixel: f32) {
+        let bar_width = 4.0 * world_units_per_pixel;
+        let bar_gap = 1.0 * world_units_per_pixel;
+        let chart_width =
+            (RESOURCE_COUNT as f32 * bar_width) + ((RESOURCE_COUNT as f32 - 1.0) * bar_gap);
+        let chart_height = 14.0 * world_units_per_pixel;
+        let panel_padding = 2.0 * world_units_per_pixel;
+        let status_gap = 2.0 * world_units_per_pixel;
+        let status_row_height = 2.0 * world_units_per_pixel;
+        let status_row_spacing = 1.0 * world_units_per_pixel;
+        let origin_x = self.pos.x - chart_width * 0.5;
+        let origin_y = self.pos.y - chart_height * 0.5;
+        let frame_x = origin_x - panel_padding;
+        let frame_y = origin_y - panel_padding;
+        let frame_w = chart_width + panel_padding * 2.0;
+        let frame_h = chart_height + panel_padding * 2.0;
+        let status_panel_h =
+            panel_padding * 2.0 + status_row_height * 3.0 + status_row_spacing * 2.0;
+        let status_panel_y = frame_y + frame_h + status_gap;
+        let highlight_thickness = 3.0 * world_units_per_pixel;
+
+        draw_rectangle_lines(frame_x, frame_y, frame_w, frame_h, highlight_thickness, RED);
+        draw_rectangle_lines(
+            frame_x,
+            status_panel_y,
+            frame_w,
+            status_panel_h,
+            highlight_thickness,
+            RED,
+        );
+    }
 }

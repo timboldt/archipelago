@@ -46,12 +46,13 @@ cargo +nightly fmt
 - **UI legend:** A fixed top-left legend maps resource colors (and empty ships) for quick visual decoding.
 - **Ship shape key:** The same panel includes a compact ship-shape legend (Runner triangle, Freighter square, Coaster circle).
 - **Legend counters:** The legend now shows total archipelago inventory beside each resource label.
-- **Macro counters:** The same panel also shows global Population, global Cash, average Industry (infrastructure level), and a `Tools / 1k pop` health ratio.
-- **Tuning HUD:** The left panel shows live `capital_carry_cost_per_time` and a global `cost_per_mile_factor` for ship economics.
+- **Macro counters:** The same panel also shows global Population, global Cash, and average Industry (infrastructure level).
+- **Tuning HUD:** The left panel shows a global `cost_per_mile_factor` for ship economics.
 - **Fleet HUD:** The panel shows current ship count plus archetype mix (`R/F/C` = Runner/Freighter/Coaster).
 - **Ship inspector HUD:** A top-right panel shows one selected ship's details (archetype, status, speed, cargo volume usage, fuel/maintenance rates, cash, and dominant cargo by value).
 - **Selection highlight:** The currently selected ship is marked in world space with a red ring.
 - **Island inspector HUD:** A second top-right panel shows one selected island's details (population, cash, infrastructure, inventory mix, and local prices).
+- **Island highlight:** The currently selected island is highlighted in world space with a bold red border.
 - **Resources:** Grain, Timber, Iron, Tools, Spices.
 - **Cargo volume:** Resources have per-unit volume; Grain is bulky while Tools/Spices are compact, so value density matters for ship loading.
 - **Prices:** Island-local with a damped scarcity curve (log-shaped pressure) to avoid extreme low-inventory spikes.

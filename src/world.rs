@@ -419,6 +419,12 @@ impl World {
         for island in &self.islands {
             island.draw(world_units_per_pixel);
         }
+
+        if !self.islands.is_empty() {
+            let selected_island_idx = self.selected_island_index.min(self.islands.len() - 1);
+            self.islands[selected_island_idx].draw_selection_border(world_units_per_pixel);
+        }
+
         for ship in &self.ships {
             ship.draw();
         }
@@ -508,11 +514,6 @@ impl World {
         } else {
             total_infrastructure / self.islands.len() as f32
         };
-        let tools_per_1k_pop = if total_population > 0.0 {
-            total_inventory[Resource::Tools.idx()] * 1000.0 / total_population
-        } else {
-            0.0
-        };
         let mut runner_count = 0_usize;
         let mut freighter_count = 0_usize;
         let mut coaster_count = 0_usize;
@@ -527,11 +528,6 @@ impl World {
         let pop_text = format!("Population: {:.0}", total_population);
         let cash_text = format!("Cash: {:.0}", total_cash);
         let infra_text = format!("Industry: {:.2}", avg_infrastructure);
-        let tools_pop_text = format!("Tools / 1k pop: {:.2}", tools_per_1k_pop);
-        let carry_cost_text = format!(
-            "Carry cost: {:.4}",
-            self.planning_tuning.capital_carry_cost_per_time
-        );
         let mile_cost_text = format!(
             "Mile cost x: {:.2}",
             self.planning_tuning.cost_per_mile_factor
@@ -545,35 +541,21 @@ impl World {
         draw_text(&cash_text, panel_x + 10.0, panel_y + 190.0, 18.0, WHITE);
         draw_text(&infra_text, panel_x + 10.0, panel_y + 208.0, 18.0, WHITE);
         draw_text(
-            &tools_pop_text,
+            &mile_cost_text,
             panel_x + 10.0,
             panel_y + 226.0,
             18.0,
             WHITE,
         );
         draw_text(
-            &carry_cost_text,
+            &ship_count_text,
             panel_x + 10.0,
             panel_y + 244.0,
             18.0,
             WHITE,
         );
         draw_text(
-            &ship_count_text,
-            panel_x + 10.0,
-            panel_y + 280.0,
-            18.0,
-            WHITE,
-        );
-        draw_text(
             &archetype_text,
-            panel_x + 10.0,
-            panel_y + 298.0,
-            18.0,
-            WHITE,
-        );
-        draw_text(
-            &mile_cost_text,
             panel_x + 10.0,
             panel_y + 262.0,
             18.0,
