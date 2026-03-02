@@ -1,6 +1,7 @@
 use ::rand::Rng;
 use macroquad::prelude::*;
 use rayon::prelude::*;
+use std::time::Instant;
 
 use crate::island::{Island, Resource, RESOURCE_COUNT};
 use crate::ship::{
@@ -19,10 +20,40 @@ const TARGET_SHIPS_PER_ISLAND: f32 = 12.0;
 const LIFECYCLE_CHECK_INTERVAL_TICKS: u64 = 30;
 const MUTATION_STRENGTH: f32 = 0.05;
 const MAX_DOCK_SETTLEMENT_STEPS: usize = 3;
+const PERF_HUD_UPDATE_INTERVAL_SECS: f32 = 1.0;
+
+#[derive(Clone, Copy, Default)]
+struct FrameTimings {
+    economy_ms: f32,
+    movement_ms: f32,
+    dock_ms: f32,
+    friction_ms: f32,
+    total_ms: f32,
+}
+
+impl FrameTimings {
+    fn add_assign(&mut self, other: &FrameTimings) {
+        self.economy_ms += other.economy_ms;
+        self.movement_ms += other.movement_ms;
+        self.dock_ms += other.dock_ms;
+        self.friction_ms += other.friction_ms;
+        self.total_ms += other.total_ms;
+    }
+
+    fn scaled(&self, scale: f32) -> Self {
+        Self {
+            economy_ms: self.economy_ms * scale,
+            movement_ms: self.movement_ms * scale,
+            dock_ms: self.dock_ms * scale,
+            friction_ms: self.friction_ms * scale,
+            total_ms: self.total_ms * scale,
+        }
+    }
+}
 
 pub struct World {
     pub islands: Vec<Island>,
-    pub ships: Vec<Ship>,
+    pub ships: Vec<Option<Ship>>,
     selected_ship_index: usize,
     selected_island_index: usize,
     recent_route_departures: Vec<Vec<f32>>,
@@ -30,6 +61,10 @@ pub struct World {
     route_history_cursor: usize,
     planning_tuning: PlanningTuning,
     tick: u64,
+    frame_timings: FrameTimings,
+    frame_timings_accum: FrameTimings,
+    frame_timings_samples: u32,
+    perf_hud_elapsed_secs: f32,
 }
 
 impl World {
@@ -78,16 +113,16 @@ impl World {
             .collect();
 
         // Ships start docked at a random island with randomised speeds.
-        let ships: Vec<Ship> = (0..num_ships)
+        let ships: Vec<Option<Ship>> = (0..num_ships)
             .map(|i| {
                 let speed = rng.gen_range(200.0_f32..500.0);
                 let start_island_id = i % islands.len();
-                Ship::new(
+                Some(Ship::new(
                     islands[start_island_id].pos,
                     speed,
                     num_islands,
                     start_island_id,
-                )
+                ))
             })
             .collect();
 
@@ -105,6 +140,10 @@ impl World {
             route_history_cursor: 0,
             planning_tuning: PlanningTuning::default(),
             tick: 0,
+            frame_timings: FrameTimings::default(),
+            frame_timings_accum: FrameTimings::default(),
+            frame_timings_samples: 0,
+            perf_hud_elapsed_secs: 0.0,
         }
     }
 
@@ -112,24 +151,67 @@ impl World {
         self.planning_tuning = planning_tuning;
     }
 
-    pub fn select_next_ship(&mut self) {
+    fn active_ship_count(&self) -> usize {
+        self.ships.iter().filter(|ship| ship.is_some()).count()
+    }
+
+    fn first_active_ship_index(&self) -> Option<usize> {
+        self.ships.iter().position(|ship| ship.is_some())
+    }
+
+    fn find_next_active_ship_index(&self, from: usize, forward: bool) -> Option<usize> {
+        if self.ships.is_empty() {
+            return None;
+        }
+
+        let len = self.ships.len();
+        let mut idx = from % len;
+        for _ in 0..len {
+            idx = if forward {
+                (idx + 1) % len
+            } else {
+                (idx + len - 1) % len
+            };
+            if self.ships[idx].is_some() {
+                return Some(idx);
+            }
+        }
+        None
+    }
+
+    fn ensure_selected_ship_valid(&mut self) {
         if self.ships.is_empty() {
             self.selected_ship_index = 0;
             return;
         }
-        self.selected_ship_index = (self.selected_ship_index + 1) % self.ships.len();
+
+        if self.selected_ship_index >= self.ships.len()
+            || self.ships[self.selected_ship_index].is_none()
+        {
+            self.selected_ship_index = self.first_active_ship_index().unwrap_or(0);
+        }
+    }
+
+    pub fn select_next_ship(&mut self) {
+        if self.active_ship_count() == 0 {
+            self.selected_ship_index = 0;
+            return;
+        }
+        self.ensure_selected_ship_valid();
+        self.selected_ship_index = self
+            .find_next_active_ship_index(self.selected_ship_index, true)
+            .unwrap_or(self.selected_ship_index);
     }
 
     pub fn select_previous_ship(&mut self) {
-        if self.ships.is_empty() {
+        if self.active_ship_count() == 0 {
             self.selected_ship_index = 0;
             return;
         }
-        if self.selected_ship_index == 0 {
-            self.selected_ship_index = self.ships.len() - 1;
-        } else {
-            self.selected_ship_index -= 1;
-        }
+        self.ensure_selected_ship_valid();
+        self.selected_ship_index = self
+            .find_next_active_ship_index(self.selected_ship_index, false)
+            .unwrap_or(self.selected_ship_index);
     }
 
     pub fn select_next_island(&mut self) {
@@ -153,11 +235,9 @@ impl World {
     }
 
     pub fn update(&mut self, dt: f32) {
-        if self.ships.is_empty() {
-            self.selected_ship_index = 0;
-        } else if self.selected_ship_index >= self.ships.len() {
-            self.selected_ship_index = self.ships.len() - 1;
-        }
+        let frame_start = Instant::now();
+        let mut current_frame_timings = FrameTimings::default();
+        self.ensure_selected_ship_valid();
         if self.islands.is_empty() {
             self.selected_island_index = 0;
         } else if self.selected_island_index >= self.islands.len() {
@@ -166,13 +246,40 @@ impl World {
 
         self.tick = self.tick.saturating_add(1);
         self.begin_route_history_tick();
+
+        let phase_start = Instant::now();
         self.update_island_economy(dt);
+        current_frame_timings.economy_ms = phase_start.elapsed().as_secs_f32() * 1000.0;
+
+        let phase_start = Instant::now();
         self.move_ships(dt);
+        current_frame_timings.movement_ms = phase_start.elapsed().as_secs_f32() * 1000.0;
+
+        let phase_start = Instant::now();
         self.process_docked_ships();
+        current_frame_timings.dock_ms = phase_start.elapsed().as_secs_f32() * 1000.0;
+
+        let phase_start = Instant::now();
         self.apply_maritime_friction(dt);
+        current_frame_timings.friction_ms = phase_start.elapsed().as_secs_f32() * 1000.0;
+
         self.route_history_cursor = (self.route_history_cursor + 1) % ROUTE_HISTORY_WINDOW_TICKS;
         if self.tick.is_multiple_of(LIFECYCLE_CHECK_INTERVAL_TICKS) {
             self.evolve_fleet();
+        }
+        current_frame_timings.total_ms = frame_start.elapsed().as_secs_f32() * 1000.0;
+
+        self.frame_timings_accum.add_assign(&current_frame_timings);
+        self.frame_timings_samples = self.frame_timings_samples.saturating_add(1);
+        self.perf_hud_elapsed_secs += dt.max(0.0);
+        if self.perf_hud_elapsed_secs >= PERF_HUD_UPDATE_INTERVAL_SECS
+            && self.frame_timings_samples > 0
+        {
+            let inv_samples = 1.0 / self.frame_timings_samples as f32;
+            self.frame_timings = self.frame_timings_accum.scaled(inv_samples);
+            self.frame_timings_accum = FrameTimings::default();
+            self.frame_timings_samples = 0;
+            self.perf_hud_elapsed_secs = 0.0;
         }
     }
 
@@ -198,64 +305,90 @@ impl World {
     }
 
     fn move_ships(&mut self, dt: f32) {
-        for ship in &mut self.ships {
-            let _ = ship.update(dt, self.planning_tuning.cost_per_mile_factor);
-        }
+        let cost_per_mile_factor = self.planning_tuning.cost_per_mile_factor;
+        self.ships.par_iter_mut().for_each(|slot| {
+            if let Some(ship) = slot.as_mut() {
+                let _ = ship.update(dt, cost_per_mile_factor);
+            }
+        });
     }
 
     fn apply_maritime_friction(&mut self, dt: f32) {
-        let global_crowding_multiplier = (self.ships.len() as f32 / 100.0).max(1.0);
-        for ship in &mut self.ships {
-            ship.apply_maritime_friction(
-                dt,
-                global_crowding_multiplier,
-                self.planning_tuning.cost_per_mile_factor,
-            );
-        }
+        let global_crowding_multiplier = (self.active_ship_count() as f32 / 100.0).max(1.0);
+        let cost_per_mile_factor = self.planning_tuning.cost_per_mile_factor;
+        self.ships.par_iter_mut().for_each(|slot| {
+            if let Some(ship) = slot.as_mut() {
+                ship.apply_maritime_friction(dt, global_crowding_multiplier, cost_per_mile_factor);
+            }
+        });
     }
 
     fn process_docked_ships(&mut self) {
-        let mut ships_by_island = vec![Vec::new(); self.islands.len()];
-        let mut sold_this_tick = vec![false; self.ships.len()];
-        let mut bankrupt_this_tick = vec![false; self.ships.len()];
-        for (ship_idx, ship) in self.ships.iter().enumerate() {
+        struct IslandBatchResult {
+            ships: Vec<(usize, Ship)>,
+            outbound_recent_departures: Vec<f32>,
+            departure_targets: Vec<usize>,
+        }
+
+        let island_count = self.islands.len();
+        if island_count == 0 {
+            return;
+        }
+
+        let mut ship_slots = std::mem::take(&mut self.ships);
+        let mut ships_by_island: Vec<Vec<(usize, Ship)>> =
+            (0..island_count).map(|_| Vec::new()).collect();
+
+        for (ship_id, slot) in ship_slots.iter_mut().enumerate() {
+            let Some(ship) = slot.take() else {
+                continue;
+            };
+
             if let Some(island_id) = ship.docked_island() {
-                if island_id < self.islands.len() {
-                    ships_by_island[island_id].push(ship_idx);
+                if island_id < island_count {
+                    ships_by_island[island_id].push((ship_id, ship));
+                    continue;
                 }
             }
+
+            *slot = Some(ship);
         }
 
         let island_positions: Vec<Vec2> = self.islands.iter().map(|island| island.pos).collect();
-        let mut departure_orders: Vec<(usize, usize)> = Vec::new();
-        let mut outbound_recent_departures_by_island = self.recent_route_departures.clone();
+        let planning_tuning = self.planning_tuning;
+        let tick = self.tick;
+        let outbound_seed = self.recent_route_departures.clone();
 
-        // Phase 1: execute sell/buy actions without cross-island ledger mutation.
-        for (island_id, ship_indices) in ships_by_island.iter().enumerate() {
-            if ship_indices.is_empty() {
-                continue;
-            }
+        let island_results: Vec<IslandBatchResult> = self
+            .islands
+            .par_iter_mut()
+            .zip(ships_by_island.into_par_iter())
+            .zip(outbound_seed.into_par_iter())
+            .enumerate()
+            .map(|(island_id, ((island, mut docked_ships), mut outbound_recent_departures))| {
+                if docked_ships.is_empty() {
+                    return IslandBatchResult {
+                        ships: docked_ships,
+                        outbound_recent_departures,
+                        departure_targets: Vec::new(),
+                    };
+                }
 
-            let outbound_recent_departures = &outbound_recent_departures_by_island[island_id];
+                island.mark_seen(tick);
+                let mut sold_and_empty = vec![false; docked_ships.len()];
+                let mut bankrupt = vec![false; docked_ships.len()];
 
-            {
-                let island = &mut self.islands[island_id];
-                island.mark_seen(self.tick);
-
-                for &ship_idx in ship_indices {
-                    if bankrupt_this_tick[ship_idx] {
-                        continue;
-                    }
-                    let ship_tuning = self.ships[ship_idx].effective_tuning(&self.planning_tuning);
-                    self.ships[ship_idx].begin_dock_tick(&ship_tuning);
+                for (idx, (_, ship)) in docked_ships.iter_mut().enumerate() {
+                    let ship_tuning = ship.effective_tuning(&planning_tuning);
+                    ship.begin_dock_tick(&ship_tuning);
                     let load_context = LoadPlanningContext {
                         current_island_id: island_id,
                         island_positions: &island_positions,
-                        current_tick: self.tick,
+                        current_tick: tick,
                         tuning: &ship_tuning,
-                        outbound_recent_departures,
+                        outbound_recent_departures: &outbound_recent_departures,
                     };
-                    let settled_any = self.ships[ship_idx].trade_settle_until_stuck(
+                    let settled_any = ship.trade_settle_until_stuck(
                         island_id,
                         island,
                         &load_context,
@@ -263,164 +396,141 @@ impl World {
                         MAX_DOCK_SETTLEMENT_STEPS,
                     );
                     if settled_any {
-                        // Only hold ships that fully unloaded and are now empty.
-                        // If cargo remains after a partial sale, allow immediate redeparture.
-                        sold_this_tick[ship_idx] = self.ships[ship_idx].has_no_cargo();
+                        sold_and_empty[idx] = ship.has_no_cargo();
                     }
-                    if self.ships[ship_idx].is_bankrupt() {
-                        bankrupt_this_tick[ship_idx] = true;
+                    if ship.is_bankrupt() {
+                        bankrupt[idx] = true;
                     }
                 }
 
-                island.recompute_local_prices(self.tick);
+                island.recompute_local_prices(tick);
 
-                for &ship_idx in ship_indices {
-                    if bankrupt_this_tick[ship_idx] {
+                for (idx, (_, ship)) in docked_ships.iter_mut().enumerate() {
+                    if bankrupt[idx] {
                         continue;
                     }
-                    let exclude = self.ships[ship_idx].just_sold_resource();
-                    let ship_tuning = self.ships[ship_idx].effective_tuning(&self.planning_tuning);
+                    let exclude = ship.just_sold_resource();
+                    let ship_tuning = ship.effective_tuning(&planning_tuning);
                     let load_context = LoadPlanningContext {
                         current_island_id: island_id,
                         island_positions: &island_positions,
-                        current_tick: self.tick,
+                        current_tick: tick,
                         tuning: &ship_tuning,
-                        outbound_recent_departures,
+                        outbound_recent_departures: &outbound_recent_departures,
                     };
-                    let _ =
-                        self.ships[ship_idx].trade_load_if_empty(island, exclude, &load_context);
-                }
-            }
-        }
-
-        // Phase 2: merge ship ledgers into each island buffer in parallel.
-        let merged_island_ledgers = ships_by_island
-            .par_iter()
-            .enumerate()
-            .map(|(island_id, ship_indices)| {
-                if ship_indices.is_empty() {
-                    return None;
+                    let _ = ship.trade_load_if_empty(island, exclude, &load_context);
                 }
 
-                let mut island_ledger_buffer = self.islands[island_id].ledger.clone();
-                for &ship_idx in ship_indices {
-                    if sold_this_tick[ship_idx] || bankrupt_this_tick[ship_idx] {
+                let mut island_ledger_buffer = island.ledger.clone();
+                for (idx, (_, ship)) in docked_ships.iter().enumerate() {
+                    if sold_and_empty[idx] || bankrupt[idx] {
                         continue;
                     }
-                    self.ships[ship_idx]
-                        .contribute_ledger_to_island_buffer(island_id, &mut island_ledger_buffer);
+                    ship.contribute_ledger_to_island_buffer(island_id, &mut island_ledger_buffer);
+                }
+                island.ledger = island_ledger_buffer;
+
+                let island_ledger_snapshot = island.ledger.clone();
+                let mut departure_targets = Vec::new();
+
+                for (idx, (_, ship)) in docked_ships.iter_mut().enumerate() {
+                    if sold_and_empty[idx] || bankrupt[idx] {
+                        continue;
+                    }
+                    if !ship.has_no_cargo() && !ship.cargo_changed_this_dock() {
+                        continue;
+                    }
+
+                    let ship_tuning = ship.effective_tuning(&planning_tuning);
+                    ship.sync_ledger_from_snapshot(&island_ledger_snapshot);
+                    if let Some(target_island_id) = ship.plan_next_island(
+                        island_id,
+                        &island_positions,
+                        tick,
+                        &ship_tuning,
+                        &outbound_recent_departures,
+                    ) {
+                        if target_island_id != island_id {
+                            ship.set_target(target_island_id, island_positions[target_island_id]);
+                            departure_targets.push(target_island_id);
+                            if let Some(slot) = outbound_recent_departures.get_mut(target_island_id)
+                            {
+                                *slot += 1.0;
+                            }
+                        }
+                    }
                 }
 
-                Some(island_ledger_buffer)
-            })
-            .collect::<Vec<_>>();
+                let ships = docked_ships
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(idx, pair)| (!bankrupt[idx]).then_some(pair))
+                    .collect();
 
-        for (island_id, maybe_merged_ledger) in merged_island_ledgers.into_iter().enumerate() {
-            if let Some(merged_ledger) = maybe_merged_ledger {
-                self.islands[island_id].ledger = merged_ledger;
-            }
-        }
-
-        // Phase 3: use the merged island ledger snapshot for planning, then stage departures.
-        for (island_id, ship_indices) in ships_by_island.iter().enumerate() {
-            if ship_indices.is_empty() {
-                continue;
-            }
-
-            let island_ledger_snapshot = self.islands[island_id].ledger.clone();
-            let outbound_recent_departures = &mut outbound_recent_departures_by_island[island_id];
-
-            for &ship_idx in ship_indices {
-                if sold_this_tick[ship_idx] || bankrupt_this_tick[ship_idx] {
-                    continue;
-                }
-                if !self.ships[ship_idx].has_no_cargo()
-                    && !self.ships[ship_idx].cargo_changed_this_dock()
-                {
-                    continue;
-                }
-                let ship_tuning = self.ships[ship_idx].effective_tuning(&self.planning_tuning);
-                self.ships[ship_idx].sync_ledger_from_snapshot(&island_ledger_snapshot);
-                if let Some(target_island_id) = self.ships[ship_idx].plan_next_island(
-                    island_id,
-                    &island_positions,
-                    self.tick,
-                    &ship_tuning,
+                IslandBatchResult {
+                    ships,
                     outbound_recent_departures,
-                ) {
-                    if target_island_id != island_id {
-                        departure_orders.push((ship_idx, target_island_id));
-                        if let Some(slot) = outbound_recent_departures.get_mut(target_island_id) {
-                            *slot += 1.0;
-                        }
-                        if island_id < self.route_departure_history[self.route_history_cursor].len()
-                            && target_island_id
-                                < self.route_departure_history[self.route_history_cursor][island_id]
-                                    .len()
-                        {
-                            let slot = &mut self.route_departure_history[self.route_history_cursor]
-                                [island_id][target_island_id];
-                            *slot = slot.saturating_add(1);
-                        }
+                    departure_targets,
+                }
+            })
+            .collect();
+
+        for (island_id, result) in island_results.into_iter().enumerate() {
+            self.recent_route_departures[island_id] = result.outbound_recent_departures;
+
+            if island_id < self.route_departure_history[self.route_history_cursor].len() {
+                for target_island_id in result.departure_targets {
+                    if target_island_id
+                        < self.route_departure_history[self.route_history_cursor][island_id].len()
+                    {
+                        let slot = &mut self.route_departure_history[self.route_history_cursor]
+                            [island_id][target_island_id];
+                        *slot = slot.saturating_add(1);
                     }
                 }
             }
 
-            if island_id < self.recent_route_departures.len() {
-                self.recent_route_departures[island_id] =
-                    outbound_recent_departures_by_island[island_id].clone();
+            for (ship_id, ship) in result.ships {
+                ship_slots[ship_id] = Some(ship);
             }
         }
 
-        for (ship_idx, target_island_id) in departure_orders {
-            let target_pos = self.islands[target_island_id].pos;
-            self.ships[ship_idx].set_target(target_island_id, target_pos);
-        }
-
-        if bankrupt_this_tick.iter().any(|is_bankrupt| *is_bankrupt) {
-            let old_ships = std::mem::take(&mut self.ships);
-            self.ships = old_ships
-                .into_iter()
-                .enumerate()
-                .filter_map(|(idx, ship)| (!bankrupt_this_tick[idx]).then_some(ship))
-                .collect();
-        }
+        self.ships = ship_slots;
+        self.ensure_selected_ship_valid();
     }
 
     fn evolve_fleet(&mut self) {
         let scuttle_threshold = STARTING_CASH * SCUTTLE_THRESHOLD_MULTIPLIER;
         let island_count = self.islands.len().max(1) as f32;
         let fleet_pressure =
-            (self.ships.len() as f32 / (island_count * TARGET_SHIPS_PER_ISLAND)).max(1.0);
+            (self.active_ship_count() as f32 / (island_count * TARGET_SHIPS_PER_ISLAND)).max(1.0);
         let cost_factor = self.planning_tuning.cost_per_mile_factor.clamp(0.2, 5.0);
         let birth_threshold = STARTING_CASH * BIRTH_THRESHOLD_MULTIPLIER * cost_factor * fleet_pressure;
         let birth_fee = STARTING_CASH * BIRTH_FEE_MULTIPLIER * cost_factor * fleet_pressure;
         let mut rng = ::rand::thread_rng();
 
-        let mut scuttle_mask = vec![false; self.ships.len()];
-        let mut daughters: Vec<Ship> = Vec::new();
+        let mut daughters: Vec<Option<Ship>> = Vec::new();
 
-        for (idx, ship) in self.ships.iter_mut().enumerate() {
+        for slot in &mut self.ships {
+            let Some(ship) = slot.as_mut() else {
+                continue;
+            };
+
             if ship.estimated_net_worth() < scuttle_threshold {
-                scuttle_mask[idx] = true;
+                *slot = None;
                 continue;
             }
 
             if ship.cash >= birth_threshold + birth_fee {
                 if let Some(daughter) = ship.spawn_daughter(MUTATION_STRENGTH, &mut rng) {
                     ship.cash -= birth_fee;
-                    daughters.push(daughter);
+                    daughters.push(Some(daughter));
                 }
             }
         }
 
-        let old_ships = std::mem::take(&mut self.ships);
-        self.ships = old_ships
-            .into_iter()
-            .enumerate()
-            .filter_map(|(idx, ship)| (!scuttle_mask[idx]).then_some(ship))
-            .collect();
         self.ships.extend(daughters);
+        self.ensure_selected_ship_valid();
     }
 
     pub fn draw(&self) {
@@ -437,13 +547,15 @@ impl World {
             self.islands[selected_island_idx].draw_selection_border(world_units_per_pixel);
         }
 
-        for ship in &self.ships {
+        for ship in self.ships.iter().flatten() {
             ship.draw();
         }
 
-        if !self.ships.is_empty() {
-            let selected_idx = self.selected_ship_index.min(self.ships.len() - 1);
-            let ship = &self.ships[selected_idx];
+        if let Some(ship) = self
+            .ships
+            .get(self.selected_ship_index)
+            .and_then(|slot| slot.as_ref())
+        {
             let ring_radius = 14.0 * world_units_per_pixel;
             let ring_thickness = 3.0 * world_units_per_pixel;
             draw_circle_lines(ship.pos.x, ship.pos.y, ring_radius, ring_thickness, RED);
@@ -454,7 +566,7 @@ impl World {
         let panel_x = 14.0;
         let panel_y = 14.0;
         let panel_w = 260.0;
-        let panel_h = 310.0;
+        let panel_h = 404.0;
 
         let mut total_inventory = [0.0_f32; RESOURCE_COUNT];
         let mut total_population = 0.0_f32;
@@ -531,7 +643,7 @@ impl World {
         let mut runner_count = 0_usize;
         let mut freighter_count = 0_usize;
         let mut coaster_count = 0_usize;
-        for ship in &self.ships {
+        for ship in self.ships.iter().flatten() {
             match ship.archetype() {
                 ShipArchetype::Runner => runner_count += 1,
                 ShipArchetype::Freighter => freighter_count += 1,
@@ -546,11 +658,18 @@ impl World {
             "Mile cost x: {:.2}",
             self.planning_tuning.cost_per_mile_factor
         );
-        let ship_count_text = format!("Ships: {}", self.ships.len());
+        let active_ship_count = self.active_ship_count();
+        let ship_count_text = format!("Ships: {}", active_ship_count);
         let archetype_text = format!(
             "R/F/C: {}/{}/{}",
             runner_count, freighter_count, coaster_count
         );
+        let perf_header_text = "Perf (ms)";
+        let perf_economy_text = format!("Economy: {:.2}", self.frame_timings.economy_ms);
+        let perf_movement_text = format!("Movement: {:.2}", self.frame_timings.movement_ms);
+        let perf_dock_text = format!("Dock: {:.2}", self.frame_timings.dock_ms);
+        let perf_friction_text = format!("Friction: {:.2}", self.frame_timings.friction_ms);
+        let perf_total_text = format!("Total: {:.2}", self.frame_timings.total_ms);
         draw_text(&pop_text, panel_x + 10.0, panel_y + 172.0, 18.0, WHITE);
         draw_text(&cash_text, panel_x + 10.0, panel_y + 190.0, 18.0, WHITE);
         draw_text(&infra_text, panel_x + 10.0, panel_y + 208.0, 18.0, WHITE);
@@ -575,6 +694,42 @@ impl World {
             18.0,
             WHITE,
         );
+        draw_text(perf_header_text, panel_x + 10.0, panel_y + 288.0, 18.0, WHITE);
+        draw_text(
+            &perf_economy_text,
+            panel_x + 10.0,
+            panel_y + 306.0,
+            17.0,
+            WHITE,
+        );
+        draw_text(
+            &perf_movement_text,
+            panel_x + 10.0,
+            panel_y + 324.0,
+            17.0,
+            WHITE,
+        );
+        draw_text(
+            &perf_dock_text,
+            panel_x + 10.0,
+            panel_y + 342.0,
+            17.0,
+            WHITE,
+        );
+        draw_text(
+            &perf_friction_text,
+            panel_x + 10.0,
+            panel_y + 360.0,
+            17.0,
+            WHITE,
+        );
+        draw_text(
+            &perf_total_text,
+            panel_x + 10.0,
+            panel_y + 378.0,
+            17.0,
+            WHITE,
+        );
 
         let inspect_w = 320.0;
         let inspect_h = 226.0;
@@ -590,13 +745,16 @@ impl World {
         draw_rectangle_lines(inspect_x, inspect_y, inspect_w, inspect_h, 2.0, LIGHTGRAY);
         draw_text("Selected Ship", inspect_x + 10.0, inspect_y + 22.0, 24.0, WHITE);
 
-        if self.ships.is_empty() {
+        if active_ship_count == 0 {
             draw_text("No ships", inspect_x + 10.0, inspect_y + 48.0, 18.0, WHITE);
             return;
         }
 
-        let selected_idx = self.selected_ship_index.min(self.ships.len() - 1);
-        let ship = &self.ships[selected_idx];
+        let selected_idx = self.selected_ship_index;
+        let Some(ship) = self.ships.get(selected_idx).and_then(|slot| slot.as_ref()) else {
+            draw_text("No ships", inspect_x + 10.0, inspect_y + 48.0, 18.0, WHITE);
+            return;
+        };
 
         let archetype_label = match ship.archetype() {
             ShipArchetype::Runner => "Runner",
@@ -625,7 +783,12 @@ impl World {
             "Top cargo value: Empty".to_string()
         };
 
-        let ship_id_text = format!("Ship: {}/{}", selected_idx + 1, self.ships.len());
+        let ship_id_text = format!(
+            "Ship ID: {}  Active: {}/{}",
+            selected_idx,
+            active_ship_count,
+            self.ships.len()
+        );
         let archetype_text = format!("Archetype: {}", archetype_label);
         let speed_text = format!("Speed: {:.1}", ship.speed());
         let cargo_text = format!(

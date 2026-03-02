@@ -15,6 +15,7 @@ The project currently implements a working simulation scaffold with a phased wor
 	- load cargo (buy)
 	- merge ship gossip into island ledgers in a parallel buffered phase
 	- plan departure target from a stable merged island-ledger snapshot
+	- process island batches in parallel and reinsert ships by stable global slot ID
 
 At startup, ships begin docked and load cargo before their first departure.
 
@@ -82,6 +83,7 @@ cargo +nightly fmt
 - **Pair-based load selection:** Empty ships score full `(local resource -> destination island)` pairs and buy the resource from the best pair, rather than picking the cheapest local good first.
 - **Anti-roundtrip guard:** A ship will not immediately reload the same resource it just sold in the same dock cycle.
 - **Information flow:** Price ledgers are merged only during ship-island docking interactions, with a dedicated parallel per-island buffered merge and stable snapshot reads so island world-view does not shift mid-tick due to ship-processing order.
+- **Stable ship IDs:** Fleet storage now uses stable slot IDs (`Vec<Option<Ship>>`); per-island dock processing temporarily extracts docked ships, processes in parallel, then reinserts each ship into its original slot.
 - **Planning:** Route selection uses an expected-value utility over volume-constrained lot sizes (`(expected unit margin × tradable units × confidence) - rigging/repair drag - transit labor drag`) with confidence decay from data staleness + transit latency, plus probabilistic speculation for route diversity.
 - **Loaded-cargo routing:** When carrying mixed cargo, ships now score each destination by summing utility across all carried resources (portfolio optimization) rather than following only the single best cargo lane.
 - **Capital carry cost:** Utility now includes a transit-time capital lock-up penalty and high-price risk attenuation, reducing over-selection of expensive cargo when long-haul uncertainty is high.
@@ -104,6 +106,7 @@ cargo +nightly fmt
 - **Wealth tax / upkeep:** Every tick, each ship now pays trait-derived labor/provisions burn from cash (scaled by fleet crowding), and sailing applies additional distance wear, so persistently unprofitable traders eventually fail the scuttle threshold and are replaced by fitter descendants without collapsing the whole fleet.
 - **Bankruptcy failure:** If a ship arrives deeply insolvent and cannot recover via dock settlement (sell/barter phase), it is culled immediately (using a negative-cash floor rather than zero).
 - **Lifecycle selection:** Fleet composition evolves over time: low-cash ships are retired, while wealthy ships can split into daughter ships with small Gaussian strategy mutations (not restricted to docked-only parents).
+- **Scuttle semantics:** Scuttled ships are marked as empty slots (`None`) instead of compacting the ship array, preserving stable IDs for UI selection and per-tick routing bookkeeping.
 - **Birth throttling:** Daughter creation now pays a birth fee and uses a pressure-scaled threshold tied to global `cost_per_mile_factor` and fleet saturation (ships per island), curbing runaway fleet growth.
 - **Trader phenotypes:** Mutated strategy genes now include risk tolerance (`confidence_decay_k` scaling: confident long-range vs cynical local traders).
 - **Dock cadence:** Ships that sell on a tick stay docked for at least that tick (no immediate departure while empty), then can reload and depart on a following tick.
