@@ -49,7 +49,7 @@ cargo +nightly fmt
 - **Macro counters:** The same panel also shows global Population, global Cash, and average Industry (infrastructure level).
 - **Tuning HUD:** The left panel shows a global `cost_per_mile_factor` for ship economics.
 - **Fleet HUD:** The panel shows current ship count plus archetype mix (`R/F/C` = Runner/Freighter/Coaster).
-- **Ship inspector HUD:** A top-right panel shows one selected ship's details (archetype, status, speed, cargo volume usage, fuel/maintenance rates, cash, and dominant cargo by value).
+- **Ship inspector HUD:** A top-right panel shows one selected ship's details (archetype, status, speed, cargo volume usage, rigging/labor rates, cash, and dominant cargo by value).
 - **Selection highlight:** The currently selected ship is marked in world space with a red ring.
 - **Island inspector HUD:** A second top-right panel shows one selected island's details (population, cash, infrastructure, inventory mix, and local prices).
 - **Island highlight:** The currently selected island is highlighted in world space with a bold red border.
@@ -76,11 +76,13 @@ cargo +nightly fmt
 - **Operating costs:** Islands pay ongoing population/infrastructure upkeep, providing a continuous cash sink that limits runaway monetary growth.
 - **Capital sink:** Cash-rich islands reinvest excess capital into infrastructure growth with a lower trigger threshold and higher conversion efficiency, feeding industrial capacity sooner.
 - **Transport cost:** Cargo accrues freight cost while traveling; planning accounts for projected freight and realized P&L applies the full accrued freight deduction.
-- **Transit insolvency:** Ships now pay travel burn continuously while moving and can go negative cash in transit.
+- **Maritime friction:** Ships now pay (1) time-based labor/provisions each tick and (2) distance-based rigging/repair wear while sailing, and can go negative cash in transit.
+- **Docking sink:** Time-based labor/provisions burn is higher while docked (port fees/taxes), so waiting in harbor has explicit economic drag.
+- **Provision scarcity ceiling:** Time-based ship burn scales by global fleet crowding (`max(1.0, ships/100)`), creating a self-limiting competitive overhead as fleet size grows.
 - **Pair-based load selection:** Empty ships score full `(local resource -> destination island)` pairs and buy the resource from the best pair, rather than picking the cheapest local good first.
 - **Anti-roundtrip guard:** A ship will not immediately reload the same resource it just sold in the same dock cycle.
 - **Information flow:** Price ledgers are merged only during ship-island docking interactions, with a dedicated parallel per-island buffered merge and stable snapshot reads so island world-view does not shift mid-tick due to ship-processing order.
-- **Planning:** Route selection uses an expected-value utility over volume-constrained lot sizes (`(expected unit margin × tradable units × confidence) - fuel - transit maintenance`) with confidence decay from data staleness + transit latency, plus probabilistic speculation for route diversity.
+- **Planning:** Route selection uses an expected-value utility over volume-constrained lot sizes (`(expected unit margin × tradable units × confidence) - rigging/repair drag - transit labor drag`) with confidence decay from data staleness + transit latency, plus probabilistic speculation for route diversity.
 - **Loaded-cargo routing:** When carrying mixed cargo, ships now score each destination by summing utility across all carried resources (portfolio optimization) rather than following only the single best cargo lane.
 - **Capital carry cost:** Utility now includes a transit-time capital lock-up penalty and high-price risk attenuation, reducing over-selection of expensive cargo when long-haul uncertainty is high.
 - **Liquidity-aware planning:** Ship ledgers now gossip destination `cash`, and route utility caps expected revenue by known market depth so traders avoid chasing phantom high prices at bankrupt islands.
@@ -96,10 +98,10 @@ cargo +nightly fmt
 - **Outlier rescue:** Each actor gossips a `last_seen_tick` estimate per island through ledgers; stale/rarely seen islands receive a capped neglect bonus during planning.
 - **Anti-herding:** Planning applies a pheromone-style route signal over the last 10 ticks: if many ships recently left `A -> B`, confidence in `B`'s quoted prices is attenuated by approximately `1/N` for ships departing from `A`.
 - **Ship learning:** Each ship maintains a decaying destination memory updated by realized trade margins, and this memory biases future route utility.
-- **Ship trade-off triangle:** Each ship now carries coupled hull traits (size + efficiency) that jointly determine speed, cargo volume capacity, fuel burn, and ongoing maintenance; hull size strongly anchors speed class so runners are visibly faster while freighters are slower.
-- **Archetype profiles:** Hull bands map to explicit profiles with clear separation: Runner (`speed≈1.5x`, `capacity≈0.75x`, `maintenance≈1.5x`), Coaster (`1.0x`, `1.0x`, `0.75x`), Freighter (`0.75x`, `2.0x`, `1.0x`) before efficiency modulation.
-- **Operational niches:** Mutation and selection can produce fast runners (high speed/low capacity), bulk haulers (high capacity/lower speed), and efficient coasters (lower burn/maintenance).
-- **Wealth tax / upkeep:** Every tick, each ship now pays its own trait-derived maintenance cost from cash, so persistently unprofitable traders eventually fail the scuttle threshold and are replaced by fitter descendants without collapsing the whole fleet.
+- **Ship trade-off triangle:** Each ship now carries coupled hull traits (size + efficiency) that jointly determine speed, cargo volume capacity, rigging/repair wear rate, and ongoing labor/provisions burn; hull size strongly anchors speed class so runners are visibly faster while freighters are slower.
+- **Archetype profiles:** Hull bands map to explicit profiles with clear separation: Runner (`speed≈1.5x`, `capacity≈0.75x`, `labor burn≈1.5x`), Coaster (`1.0x`, `1.0x`, `0.75x`), Freighter (`0.75x`, `2.0x`, `1.0x`) before efficiency modulation.
+- **Operational niches:** Mutation and selection can produce fast runners (high speed/low capacity), bulk haulers (high capacity/lower speed), and efficient coasters (lower rigging/labor drag).
+- **Wealth tax / upkeep:** Every tick, each ship now pays trait-derived labor/provisions burn from cash (scaled by fleet crowding), and sailing applies additional distance wear, so persistently unprofitable traders eventually fail the scuttle threshold and are replaced by fitter descendants without collapsing the whole fleet.
 - **Bankruptcy failure:** If a ship arrives deeply insolvent and cannot recover via dock settlement (sell/barter phase), it is culled immediately (using a negative-cash floor rather than zero).
 - **Lifecycle selection:** Fleet composition evolves over time: low-cash ships are retired, while wealthy ships can split into daughter ships with small Gaussian strategy mutations (not restricted to docked-only parents).
 - **Birth throttling:** Daughter creation now pays a birth fee and uses a pressure-scaled threshold tied to global `cost_per_mile_factor` and fleet saturation (ships per island), curbing runaway fleet growth.

@@ -169,7 +169,7 @@ impl World {
         self.update_island_economy(dt);
         self.move_ships(dt);
         self.process_docked_ships();
-        self.apply_ship_maintenance(dt);
+        self.apply_maritime_friction(dt);
         self.route_history_cursor = (self.route_history_cursor + 1) % ROUTE_HISTORY_WINDOW_TICKS;
         if self.tick.is_multiple_of(LIFECYCLE_CHECK_INTERVAL_TICKS) {
             self.evolve_fleet();
@@ -203,9 +203,14 @@ impl World {
         }
     }
 
-    fn apply_ship_maintenance(&mut self, dt: f32) {
+    fn apply_maritime_friction(&mut self, dt: f32) {
+        let global_crowding_multiplier = (self.ships.len() as f32 / 100.0).max(1.0);
         for ship in &mut self.ships {
-            ship.apply_maintenance(dt);
+            ship.apply_maritime_friction(
+                dt,
+                global_crowding_multiplier,
+                self.planning_tuning.cost_per_mile_factor,
+            );
         }
     }
 
@@ -629,7 +634,7 @@ impl World {
             ship.max_cargo_volume()
         );
         let upkeep_text = format!(
-            "Fuel/Maint: {:.2} / {:.4}",
+            "Rigging/Labor: {:.2} / {:.4}",
             ship.fuel_burn_rate(),
             ship.maintenance_rate()
         );

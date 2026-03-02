@@ -89,7 +89,9 @@ impl Default for PlanningTuning {
 
 const MIN_SHIP_SPEED: f32 = 120.0;
 const MAX_SHIP_SPEED: f32 = 600.0;
-const TRAVEL_CASH_BURN_PER_DISTANCE: f32 = 0.00022;
+const RIGGING_REPAIR_COST_PER_DISTANCE: f32 = 0.00022;
+const DOCKED_PORT_FEE_MULTIPLIER: f32 = 1.5;
+const HEAVY_LOAD_WEAR_MULTIPLIER: f32 = 1.1;
 const BANKRUPTCY_CASH_FLOOR: f32 = -20.0;
 const MIN_HULL_SIZE: f32 = 0.75;
 const MAX_HULL_SIZE: f32 = 1.60;
@@ -153,6 +155,7 @@ pub struct Ship {
     strategy_genes: StrategyGenes,
     planned_target_after_load: Option<usize>,
     cargo_changed_this_dock: bool,
+    last_step_distance: f32,
     just_sold_resource: Option<Resource>,
     last_dock_action: DockAction,
 }
@@ -193,6 +196,7 @@ impl Ship {
             strategy_genes: StrategyGenes::default(),
             planned_target_after_load: None,
             cargo_changed_this_dock: false,
+            last_step_distance: 0.0,
             just_sold_resource: None,
             last_dock_action: DockAction::None,
         }
@@ -385,8 +389,30 @@ impl Ship {
         net_worth
     }
 
-    pub fn apply_maintenance(&mut self, dt: f32) {
-        self.cash -= self.maintenance_rate * dt.max(0.0);
+    pub fn apply_maritime_friction(
+        &mut self,
+        dt: f32,
+        global_crowding_multiplier: f32,
+        cost_per_mile_factor: f32,
+    ) {
+        let mut labor_and_provisions = self.maintenance_rate
+            * dt.max(0.0)
+            * global_crowding_multiplier.max(1.0);
+        if self.docked_at.is_some() {
+            labor_and_provisions *= DOCKED_PORT_FEE_MULTIPLIER;
+        }
+
+        let cargo_load_ratio =
+            (self.total_cargo_volume() / self.max_cargo_volume.max(0.01)).clamp(0.0, 1.0);
+        let wear_multiplier = 1.0 + cargo_load_ratio * HEAVY_LOAD_WEAR_MULTIPLIER;
+        let rigging_and_repairs = self.last_step_distance.max(0.0)
+            * self.fuel_burn_rate
+            * RIGGING_REPAIR_COST_PER_DISTANCE
+            * cost_per_mile_factor.clamp(0.2, 5.0)
+            * wear_multiplier;
+
+        self.cash -= labor_and_provisions + rigging_and_repairs;
+        self.last_step_distance = 0.0;
     }
 
     pub fn is_bankrupt(&self) -> bool {
@@ -1378,11 +1404,16 @@ impl Ship {
         confidence *= price_risk_factor;
 
         let expected_profit = real_expected_profit * confidence;
-        let fuel_cost = distance
+        let estimated_load_ratio = (effective_lot_size * resource.volume_per_unit().max(0.01)
+            / self.max_cargo_volume.max(0.01))
+            .clamp(0.0, 1.0);
+        let wear_multiplier = 1.0 + estimated_load_ratio * HEAVY_LOAD_WEAR_MULTIPLIER;
+        let rigging_repair_cost = distance
             * context.tuning.transport_cost_per_distance
             * context.tuning.cost_per_mile_factor
-            * self.fuel_burn_rate;
-        let maintenance_trip_cost = transit_time * self.maintenance_rate;
+            * self.fuel_burn_rate
+            * wear_multiplier;
+        let labor_provisions_trip_cost = transit_time * self.maintenance_rate;
         let capital_carry_cost = buy_price
             * effective_lot_size
             * transit_time
@@ -1410,8 +1441,8 @@ impl Ship {
         };
 
         let utility = expected_profit
-            - fuel_cost
-            - maintenance_trip_cost
+            - rigging_repair_cost
+            - labor_provisions_trip_cost
             - capital_carry_cost
             + neglect_bonus
             + industrial_bonus
@@ -1422,18 +1453,16 @@ impl Ship {
 
     /// Move toward target. Returns the island id when docking this tick.
     pub fn update(&mut self, dt: f32, cost_per_mile_factor: f32) -> Option<usize> {
+        let _ = cost_per_mile_factor;
         let to_target = self.target - self.pos;
         let dist = to_target.length();
+        self.last_step_distance = 0.0;
         if dist < 1.0 {
             self.docked_at = self.target_island_id;
             return self.docked_at;
         }
         let step = self.speed * dt;
-        let travel_distance = step.min(dist);
-        self.cash -= travel_distance
-            * self.fuel_burn_rate
-            * TRAVEL_CASH_BURN_PER_DISTANCE
-            * cost_per_mile_factor.clamp(0.2, 5.0);
+        self.last_step_distance = step.min(dist);
         if step >= dist {
             if !self.has_no_cargo() {
                 self.cargo_distance_accrued += dist;
