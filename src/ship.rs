@@ -14,6 +14,8 @@ const DEFAULT_MARKET_DEPTH_FALLBACK: f32 = 600.0;
 const RECENT_BROKE_TICKS: f32 = 180.0;
 const BROKE_ISLAND_UTILITY_PENALTY: f32 = 5.5;
 const BROKE_CASH_COVERAGE_RATIO: f32 = 0.35;
+const BROKE_DESTINATION_BLOCK_CASH: f32 = 1.0;
+const BROKE_DESTINATION_BLOCK_MAX_AGE: f32 = 180.0;
 const INDUSTRIAL_INFRA_THRESHOLD: f32 = 1.5;
 const INDUSTRIAL_INPUT_BONUS_PER_INFRA: f32 = 4.0;
 const INDUSTRIAL_INPUT_BONUS_CAP: f32 = 14.0;
@@ -150,6 +152,7 @@ pub struct Ship {
     cargo_distance_accrued: f32,
     strategy_genes: StrategyGenes,
     planned_target_after_load: Option<usize>,
+    cargo_changed_this_dock: bool,
     just_sold_resource: Option<Resource>,
     last_dock_action: DockAction,
 }
@@ -189,6 +192,7 @@ impl Ship {
             cargo_distance_accrued: 0.0,
             strategy_genes: StrategyGenes::default(),
             planned_target_after_load: None,
+            cargo_changed_this_dock: false,
             just_sold_resource: None,
             last_dock_action: DockAction::None,
         }
@@ -473,7 +477,7 @@ impl Ship {
                 continue;
             }
 
-            let requested_amount = carrying_amount.min(self.max_units_for_trade_action(resource));
+            let requested_amount = carrying_amount;
             if requested_amount <= 0.0 {
                 continue;
             }
@@ -522,9 +526,14 @@ impl Ship {
         self.just_sold_resource
     }
 
+    pub fn cargo_changed_this_dock(&self) -> bool {
+        self.cargo_changed_this_dock
+    }
+
     pub fn begin_dock_tick(&mut self, tuning: &PlanningTuning) {
         self.last_dock_action = DockAction::None;
         self.planned_target_after_load = None;
+        self.cargo_changed_this_dock = false;
         self.just_sold_resource = None;
         let decay = tuning.learning_decay.clamp(0.0, 1.0);
         for score in &mut self.route_memory {
@@ -551,7 +560,7 @@ impl Ship {
             return self.last_dock_action;
         }
 
-        let requested_amount = carrying_amount.min(self.max_units_for_trade_action(resource));
+        let requested_amount = carrying_amount;
         if requested_amount <= 0.0 {
             return self.last_dock_action;
         }
@@ -582,6 +591,7 @@ impl Ship {
         if self.cargo[resource_idx] <= 0.0 {
             self.purchase_price_by_resource[resource_idx] = 0.0;
         }
+        self.cargo_changed_this_dock = true;
         if self.has_no_cargo() {
             self.cargo_distance_accrued = 0.0;
         }
@@ -610,11 +620,11 @@ impl Ship {
             }
 
             self.last_dock_action = DockAction::None;
-            let barter_action = self.trade_barter_if_carrying(current_island_id, island, context);
-            let action = if barter_action == DockAction::Bartered {
-                barter_action
+            let unload_action = self.trade_unload_if_carrying(current_island_id, island, tuning);
+            let action = if unload_action == DockAction::Sold {
+                unload_action
             } else {
-                self.trade_unload_if_carrying(current_island_id, island, tuning)
+                self.trade_barter_if_carrying(current_island_id, island, context)
             };
 
             match action {
@@ -811,6 +821,7 @@ impl Ship {
             self.purchase_price_by_resource[source_idx] = 0.0;
         }
         self.cargo[target_idx] += acquired_amount;
+        self.cargo_changed_this_dock = true;
         self.planned_target_after_load = Some(target_id);
         self.cargo_distance_accrued = 0.0;
         self.just_sold_resource = Some(source_resource);
@@ -937,6 +948,7 @@ impl Ship {
             0.0
         };
         self.cargo[idx] += filled;
+        self.cargo_changed_this_dock = true;
         self.planned_target_after_load = Some(chosen_target);
         let preexisting_volume = self.total_cargo_volume() - (filled * chosen_resource.volume_per_unit());
         let post_volume = self.total_cargo_volume();
@@ -995,17 +1007,6 @@ impl Ship {
         outbound_recent_departures: &[f32],
     ) -> Option<usize> {
         if !self.has_no_cargo() {
-            if let Some(preselected_target) = self.planned_target_after_load {
-                if preselected_target != current_island_id && preselected_target < self.ledger.len()
-                {
-                    return Some(preselected_target);
-                }
-            }
-
-            let mut best_target = None;
-            let mut best_utility = f32::NEG_INFINITY;
-            let mut best_confidence = 0.0;
-            let mut candidates: Vec<(usize, f32, f32)> = Vec::new();
             let utility_context = UtilityContext {
                 island_positions,
                 current_tick,
@@ -1013,13 +1014,57 @@ impl Ship {
                 outbound_recent_departures,
             };
 
+            if let Some(target_id) = self.planned_target_after_load {
+                if target_id != current_island_id {
+                    let mut destination_total_utility = 0.0;
+                    let mut had_any_resource = false;
+                    for resource in Resource::iter() {
+                        let idx = resource.idx();
+                        let lot_size = self.cargo[idx].max(0.0);
+                        if lot_size <= 0.0 {
+                            continue;
+                        }
+
+                        let fallback_buy_price = self.median_price_for_resource(resource);
+                        let reference_buy_price = if self.purchase_price_by_resource[idx] > 0.0 {
+                            self.purchase_price_by_resource[idx]
+                        } else {
+                            fallback_buy_price
+                        };
+
+                        let (utility, _confidence) = self.calculate_utility(
+                            resource,
+                            target_id,
+                            reference_buy_price,
+                            lot_size,
+                            &utility_context,
+                        );
+                        if utility.is_finite() {
+                            destination_total_utility += utility;
+                            had_any_resource = true;
+                        }
+                    }
+
+                    if had_any_resource && destination_total_utility > 0.0 {
+                        return Some(target_id);
+                    }
+                }
+            }
+
+            let mut best_target = None;
+            let mut best_utility = f32::NEG_INFINITY;
+            let mut best_confidence = 0.0;
+            let mut candidates: Vec<(usize, f32, f32)> = Vec::new();
+
             for target_id in 0..self.ledger.len() {
                 if target_id == current_island_id {
                     continue;
                 }
 
-                let mut resource_best_utility = f32::NEG_INFINITY;
-                let mut resource_best_confidence = 0.0;
+                let mut destination_total_utility = 0.0;
+                let mut confidence_weighted_sum = 0.0;
+                let mut confidence_weight = 0.0;
+                let mut had_any_resource = false;
                 for resource in Resource::iter() {
                     let idx = resource.idx();
                     let lot_size = self.cargo[idx].max(0.0);
@@ -1041,25 +1086,37 @@ impl Ship {
                         lot_size,
                         &utility_context,
                     );
-                    if utility > resource_best_utility {
-                        resource_best_utility = utility;
-                        resource_best_confidence = confidence;
+                    if utility.is_finite() {
+                        destination_total_utility += utility;
+                        confidence_weighted_sum += confidence * lot_size;
+                        confidence_weight += lot_size;
+                        had_any_resource = true;
                     }
                 }
-                if !resource_best_utility.is_finite() {
+                if !had_any_resource {
                     continue;
                 }
 
-                candidates.push((target_id, resource_best_utility, resource_best_confidence));
+                let destination_confidence = if confidence_weight > 0.0 {
+                    (confidence_weighted_sum / confidence_weight).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
 
-                if resource_best_utility > best_utility {
-                    best_utility = resource_best_utility;
+                candidates.push((target_id, destination_total_utility, destination_confidence));
+
+                if destination_total_utility > best_utility {
+                    best_utility = destination_total_utility;
                     best_target = Some(target_id);
-                    best_confidence = resource_best_confidence;
+                    best_confidence = destination_confidence;
                 }
             }
 
             if candidates.is_empty() {
+                return None;
+            }
+
+            if best_utility <= 0.0 {
                 return None;
             }
 
@@ -1163,7 +1220,11 @@ impl Ship {
             }
         }
 
-        best_target
+        if best_utility > 0.0 {
+            best_target
+        } else {
+            None
+        }
     }
 
     fn median_price_for_resource(&self, resource: Resource) -> f32 {
@@ -1281,6 +1342,14 @@ impl Ship {
 
         let quoted_island_cash = self.ledger[target_id].cash;
         let has_quoted_cash = quoted_island_cash.is_finite() && quoted_island_cash > 0.0;
+        let data_age = context
+            .current_tick
+            .saturating_sub(self.ledger[target_id].tick_updated) as f32;
+        if quoted_island_cash <= BROKE_DESTINATION_BLOCK_CASH
+            && data_age <= BROKE_DESTINATION_BLOCK_MAX_AGE
+        {
+            return (f32::NEG_INFINITY, confidence);
+        }
         let fallback_cash = self
             .median_island_cash()
             .unwrap_or(DEFAULT_MARKET_DEPTH_FALLBACK)
@@ -1319,9 +1388,6 @@ impl Ship {
             * transit_time
             * context.tuning.capital_carry_cost_per_time;
 
-        let data_age = context
-            .current_tick
-            .saturating_sub(self.ledger[target_id].tick_updated) as f32;
         let broke_revenue_threshold = gross_expected_revenue * BROKE_CASH_COVERAGE_RATIO;
         let recent_broke_factor = (1.0 - data_age / RECENT_BROKE_TICKS).clamp(0.0, 1.0);
         let broke_penalty = if has_quoted_cash && quoted_island_cash < broke_revenue_threshold {

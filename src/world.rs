@@ -14,9 +14,11 @@ const ISLAND_POSITION_ATTEMPTS: usize = 40;
 const ROUTE_HISTORY_WINDOW_TICKS: usize = 10;
 const SCUTTLE_THRESHOLD_MULTIPLIER: f32 = 0.35;
 const BIRTH_THRESHOLD_MULTIPLIER: f32 = 5.0;
+const BIRTH_FEE_MULTIPLIER: f32 = 1.5;
+const TARGET_SHIPS_PER_ISLAND: f32 = 12.0;
 const LIFECYCLE_CHECK_INTERVAL_TICKS: u64 = 30;
 const MUTATION_STRENGTH: f32 = 0.05;
-const MAX_DOCK_SETTLEMENT_STEPS: usize = 6;
+const MAX_DOCK_SETTLEMENT_STEPS: usize = 3;
 
 pub struct World {
     pub islands: Vec<Island>,
@@ -327,6 +329,11 @@ impl World {
                 if sold_this_tick[ship_idx] || bankrupt_this_tick[ship_idx] {
                     continue;
                 }
+                if !self.ships[ship_idx].has_no_cargo()
+                    && !self.ships[ship_idx].cargo_changed_this_dock()
+                {
+                    continue;
+                }
                 let ship_tuning = self.ships[ship_idx].effective_tuning(&self.planning_tuning);
                 self.ships[ship_idx].sync_ledger_from_snapshot(&island_ledger_snapshot);
                 if let Some(target_island_id) = self.ships[ship_idx].plan_next_island(
@@ -377,7 +384,12 @@ impl World {
 
     fn evolve_fleet(&mut self) {
         let scuttle_threshold = STARTING_CASH * SCUTTLE_THRESHOLD_MULTIPLIER;
-        let birth_threshold = STARTING_CASH * BIRTH_THRESHOLD_MULTIPLIER;
+        let island_count = self.islands.len().max(1) as f32;
+        let fleet_pressure =
+            (self.ships.len() as f32 / (island_count * TARGET_SHIPS_PER_ISLAND)).max(1.0);
+        let cost_factor = self.planning_tuning.cost_per_mile_factor.clamp(0.2, 5.0);
+        let birth_threshold = STARTING_CASH * BIRTH_THRESHOLD_MULTIPLIER * cost_factor * fleet_pressure;
+        let birth_fee = STARTING_CASH * BIRTH_FEE_MULTIPLIER * cost_factor * fleet_pressure;
         let mut rng = ::rand::thread_rng();
 
         let mut scuttle_mask = vec![false; self.ships.len()];
@@ -389,8 +401,9 @@ impl World {
                 continue;
             }
 
-            if ship.cash >= birth_threshold {
+            if ship.cash >= birth_threshold + birth_fee {
                 if let Some(daughter) = ship.spawn_daughter(MUTATION_STRENGTH, &mut rng) {
+                    ship.cash -= birth_fee;
                     daughters.push(daughter);
                 }
             }

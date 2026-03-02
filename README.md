@@ -81,11 +81,13 @@ cargo +nightly fmt
 - **Anti-roundtrip guard:** A ship will not immediately reload the same resource it just sold in the same dock cycle.
 - **Information flow:** Price ledgers are merged only during ship-island docking interactions, with a dedicated parallel per-island buffered merge and stable snapshot reads so island world-view does not shift mid-tick due to ship-processing order.
 - **Planning:** Route selection uses an expected-value utility over volume-constrained lot sizes (`(expected unit margin × tradable units × confidence) - fuel - transit maintenance`) with confidence decay from data staleness + transit latency, plus probabilistic speculation for route diversity.
+- **Loaded-cargo routing:** When carrying mixed cargo, ships now score each destination by summing utility across all carried resources (portfolio optimization) rather than following only the single best cargo lane.
 - **Capital carry cost:** Utility now includes a transit-time capital lock-up penalty and high-price risk attenuation, reducing over-selection of expensive cargo when long-haul uncertainty is high.
 - **Liquidity-aware planning:** Ship ledgers now gossip destination `cash`, and route utility caps expected revenue by known market depth so traders avoid chasing phantom high prices at bankrupt islands.
 - **Storage-aware planning:** Ship ledgers also gossip inventory snapshots; utility discounts destination demand by available storage headroom so traders avoid over-delivering into saturated markets.
 - **Industrial routing bonus:** Ledgers also gossip destination infrastructure level; ships add a proportional utility bonus for delivering Iron/Timber to higher-infrastructure islands (above a threshold).
 - **Recent-broke avoidance:** Ships apply a short-lived utility penalty to destinations recently observed as cash-poor, reducing repeated revisits to liquidity-starved islands after partial unloads.
+- **Broke-route suppression:** Ships now hard-reject very recent zero-cash destinations during utility evaluation, preventing persistent back-and-forth loops between bankrupt islands.
 - **Bid/ask spread:** Islands quote a spread (buy from ships at `0.95×` local, sell to ships at `1.05×` local), reducing churn loops and helping islands rebuild reserves.
 - **Barter swap-and-go:** When cash settlement is constrained, carrying ships can perform value-equivalent cargo swaps at dock (barter), allowing goods to keep flowing even during local liquidity crunches.
 - **Partial unloads:** Ships already sell whatever quantity an island can currently afford; if a sale is only partial and cargo remains, ships are now allowed to redepart in the same tick instead of waiting docked.
@@ -100,8 +102,10 @@ cargo +nightly fmt
 - **Wealth tax / upkeep:** Every tick, each ship now pays its own trait-derived maintenance cost from cash, so persistently unprofitable traders eventually fail the scuttle threshold and are replaced by fitter descendants without collapsing the whole fleet.
 - **Bankruptcy failure:** If a ship arrives deeply insolvent and cannot recover via dock settlement (sell/barter phase), it is culled immediately (using a negative-cash floor rather than zero).
 - **Lifecycle selection:** Fleet composition evolves over time: low-cash ships are retired, while wealthy ships can split into daughter ships with small Gaussian strategy mutations (not restricted to docked-only parents).
+- **Birth throttling:** Daughter creation now pays a birth fee and uses a pressure-scaled threshold tied to global `cost_per_mile_factor` and fleet saturation (ships per island), curbing runaway fleet growth.
 - **Trader phenotypes:** Mutated strategy genes now include risk tolerance (`confidence_decay_k` scaling: confident long-range vs cynical local traders).
 - **Dock cadence:** Ships that sell on a tick stay docked for at least that tick (no immediate departure while empty), then can reload and depart on a following tick.
+- **Dock performance path:** Dock settlement iterations are capped lower, loaded ships use a preselected post-load destination fast-path when viable, and loaded ships skip full destination rescans on ticks where dock actions did not change cargo.
 - **Tuning controls:** `main.rs` exposes planning/speculation/learning constants (`confidence_decay_k`, `speculation_floor`, `speculation_staleness_scale`, `speculation_uncertainty_bonus`, `learning_rate`, `learning_decay`, `learning_weight`, `transport_cost_per_distance`, `capital_carry_cost_per_time`, `island_neglect_bonus_per_tick`, `island_neglect_bonus_cap`) and applies them via `World::set_planning_tuning(...)`.
 - **Ship selection controls:** Press `[` and `]` during runtime to cycle the selected ship in the top-right inspector panel.
 - **Island selection controls:** Press `{` and `}` (Shift + `[` / Shift + `]`) to cycle the selected island in the island inspector panel.
