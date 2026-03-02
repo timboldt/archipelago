@@ -3,8 +3,8 @@ use macroquad::prelude::*;
 use strum::IntoEnumIterator;
 
 use crate::island::{
-    Inventory, Island, PriceEntry, PriceLedger, Resource, ASK_PRICE_MULTIPLIER, BASE_COSTS,
-    BID_PRICE_MULTIPLIER, INVENTORY_CARRYING_CAPACITY, RESOURCE_COUNT,
+    Inventory, Island, PriceEntry, PriceLedger, Resource, BASE_COSTS, INVENTORY_CARRYING_CAPACITY,
+    RESOURCE_COUNT,
 };
 
 const TRADE_ACTION_VOLUME: f32 = 18.0;
@@ -19,10 +19,12 @@ const BROKE_DESTINATION_BLOCK_MAX_AGE: f32 = 180.0;
 const INDUSTRIAL_INFRA_THRESHOLD: f32 = 1.5;
 const INDUSTRIAL_INPUT_BONUS_PER_INFRA: f32 = 4.0;
 const INDUSTRIAL_INPUT_BONUS_CAP: f32 = 14.0;
-const DEFAULT_CAPITAL_CARRY_COST_PER_TIME: f32 = 0.0020;
+const DEFAULT_MARKET_SPREAD: f32 = 0.10;
+const ROUTE_LEARNING_RATE: f32 = 0.20;
+const ROUTE_LEARNING_DECAY: f32 = 0.98;
 const HIGH_PRICE_RISK_WEIGHT: f32 = 0.65;
 const BASE_CARGO_VOLUME_CAPACITY: f32 = 22.0;
-const BASE_FUEL_BURN_RATE: f32 = 1.0;
+const BASE_COST_PER_DISTANCE_RATE: f32 = 1.0;
 const BASE_MAINTENANCE_RATE: f32 = 0.002;
 const RUNNER_SPEED_MULTIPLIER: f32 = 1.50;
 const COASTER_SPEED_MULTIPLIER: f32 = 1.00;
@@ -33,24 +35,15 @@ const FREIGHTER_CAPACITY_MULTIPLIER: f32 = 2.00;
 const RUNNER_MAINT_MULTIPLIER: f32 = 1.50;
 const COASTER_MAINT_MULTIPLIER: f32 = 0.75;
 const FREIGHTER_MAINT_MULTIPLIER: f32 = 1.00;
-const RUNNER_FUEL_MULTIPLIER: f32 = 1.35;
-const COASTER_FUEL_MULTIPLIER: f32 = 0.80;
-const FREIGHTER_FUEL_MULTIPLIER: f32 = 1.10;
+const RUNNER_DISTANCE_COST_MULTIPLIER: f32 = 1.35;
+const COASTER_DISTANCE_COST_MULTIPLIER: f32 = 0.80;
+const FREIGHTER_DISTANCE_COST_MULTIPLIER: f32 = 1.10;
 
 #[derive(Clone, Copy, Debug)]
 pub struct PlanningTuning {
-    pub confidence_decay_k: f32,
-    pub speculation_floor: f32,
-    pub speculation_staleness_scale: f32,
-    pub speculation_uncertainty_bonus: f32,
-    pub learning_rate: f32,
-    pub learning_decay: f32,
-    pub learning_weight: f32,
-    pub transport_cost_per_distance: f32,
-    pub cost_per_mile_factor: f32,
-    pub capital_carry_cost_per_time: f32,
-    pub island_neglect_bonus_per_tick: f32,
-    pub island_neglect_bonus_cap: f32,
+    pub global_friction_mult: f32,
+    pub info_decay_rate: f32,
+    pub market_spread: f32,
 }
 
 pub struct LoadPlanningContext<'a> {
@@ -63,6 +56,7 @@ pub struct LoadPlanningContext<'a> {
 
 struct UtilityContext<'a> {
     island_positions: &'a [Vec2],
+    max_route_distance: f32,
     current_tick: u64,
     tuning: &'a PlanningTuning,
     outbound_recent_departures: &'a [f32],
@@ -71,25 +65,17 @@ struct UtilityContext<'a> {
 impl Default for PlanningTuning {
     fn default() -> Self {
         Self {
-            confidence_decay_k: 0.003,
-            speculation_floor: 0.08,
-            speculation_staleness_scale: 0.35,
-            speculation_uncertainty_bonus: 8.0,
-            learning_rate: 0.14,
-            learning_decay: 0.98,
-            learning_weight: 12.0,
-            transport_cost_per_distance: 0.0006,
-            cost_per_mile_factor: 1.0,
-            capital_carry_cost_per_time: DEFAULT_CAPITAL_CARRY_COST_PER_TIME,
-            island_neglect_bonus_per_tick: 0.006,
-            island_neglect_bonus_cap: 18.0,
+            global_friction_mult: 1.0,
+            info_decay_rate: 0.003,
+            market_spread: DEFAULT_MARKET_SPREAD,
         }
     }
 }
 
 const MIN_SHIP_SPEED: f32 = 120.0;
 const MAX_SHIP_SPEED: f32 = 600.0;
-const RIGGING_REPAIR_COST_PER_DISTANCE: f32 = 0.00022;
+const BASE_COST_PER_DISTANCE: f32 = 0.00012;
+const COASTER_MAX_ROUTE_FRACTION: f32 = 0.20;
 const DOCKED_PORT_FEE_MULTIPLIER: f32 = 1.5;
 const HEAVY_LOAD_WEAR_MULTIPLIER: f32 = 1.1;
 const BANKRUPTCY_CASH_FLOOR: f32 = -20.0;
@@ -103,20 +89,24 @@ const MAX_GENE_SCALE: f32 = 1.20;
 #[derive(Clone, Copy, Debug)]
 pub struct StrategyGenes {
     confidence_decay_scale: f32,
-    speculation_floor_scale: f32,
-    learning_weight_scale: f32,
-    transport_cost_scale: f32,
+    risk_tolerance_scale: f32,
 }
 
 impl Default for StrategyGenes {
     fn default() -> Self {
         Self {
             confidence_decay_scale: 1.0,
-            speculation_floor_scale: 1.0,
-            learning_weight_scale: 1.0,
-            transport_cost_scale: 1.0,
+            risk_tolerance_scale: 1.0,
         }
     }
+}
+
+fn bid_multiplier(market_spread: f32) -> f32 {
+    (1.0 - market_spread.clamp(0.0, 1.8) * 0.5).max(0.05)
+}
+
+fn ask_multiplier(market_spread: f32) -> f32 {
+    1.0 + market_spread.clamp(0.0, 1.8) * 0.5
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -142,7 +132,7 @@ pub struct Ship {
     hull_size: f32,
     efficiency_rating: f32,
     max_cargo_volume: f32,
-    fuel_burn_rate: f32,
+    cost_per_distance_rate: f32,
     maintenance_rate: f32,
     target_island_id: Option<usize>,
     docked_at: Option<usize>,
@@ -173,7 +163,7 @@ impl Ship {
             hull_size,
             efficiency_rating,
             max_cargo_volume: 0.0,
-            fuel_burn_rate: 0.0,
+            cost_per_distance_rate: 0.0,
             maintenance_rate: 0.0,
             target_island_id: Some(docked_island_id),
             docked_at: Some(docked_island_id),
@@ -210,29 +200,32 @@ impl Ship {
 
     fn recompute_operational_traits(&mut self) {
         let archetype = self.profile_archetype_from_hull();
-        let (speed_mult, capacity_mult, maintenance_mult, fuel_mult) =
+        let (speed_mult, capacity_mult, maintenance_mult, distance_cost_mult) =
             Self::profile_multipliers(archetype);
 
-        let efficiency_speed_factor = (0.92 + 0.30 * (self.efficiency_rating - 1.0)).clamp(0.85, 1.10);
+        let efficiency_speed_factor =
+            (0.92 + 0.30 * (self.efficiency_rating - 1.0)).clamp(0.85, 1.10);
         self.speed = (self.base_speed * speed_mult * efficiency_speed_factor)
             .clamp(MIN_SHIP_SPEED, MAX_SHIP_SPEED);
 
-        let efficiency_capacity_factor = (0.95 + 0.10 * (self.efficiency_rating - 1.0)).clamp(0.90, 1.05);
-        self.max_cargo_volume = (BASE_CARGO_VOLUME_CAPACITY
-            * capacity_mult
-            * efficiency_capacity_factor)
-            .clamp(8.0, 80.0);
+        let efficiency_capacity_factor =
+            (0.95 + 0.10 * (self.efficiency_rating - 1.0)).clamp(0.90, 1.05);
+        self.max_cargo_volume =
+            (BASE_CARGO_VOLUME_CAPACITY * capacity_mult * efficiency_capacity_factor)
+                .clamp(8.0, 80.0);
 
-        let efficiency_fuel_factor = (1.20 - 0.40 * self.efficiency_rating).clamp(0.65, 1.15);
-        self.fuel_burn_rate = BASE_FUEL_BURN_RATE * fuel_mult * efficiency_fuel_factor;
+        let efficiency_distance_cost_factor =
+            (1.20 - 0.40 * self.efficiency_rating).clamp(0.65, 1.15);
+        self.cost_per_distance_rate =
+            BASE_COST_PER_DISTANCE_RATE * distance_cost_mult * efficiency_distance_cost_factor;
 
         let efficiency_maint_factor = (1.20 - 0.35 * self.efficiency_rating).clamp(0.70, 1.15);
         self.maintenance_rate = BASE_MAINTENANCE_RATE * maintenance_mult * efficiency_maint_factor;
     }
 
     fn profile_archetype_from_hull(&self) -> ShipArchetype {
-        let hull_position = ((self.hull_size - MIN_HULL_SIZE) / (MAX_HULL_SIZE - MIN_HULL_SIZE))
-            .clamp(0.0, 1.0);
+        let hull_position =
+            ((self.hull_size - MIN_HULL_SIZE) / (MAX_HULL_SIZE - MIN_HULL_SIZE)).clamp(0.0, 1.0);
         if hull_position < (1.0 / 3.0) {
             ShipArchetype::Runner
         } else if hull_position > (2.0 / 3.0) {
@@ -248,37 +241,69 @@ impl Ship {
                 RUNNER_SPEED_MULTIPLIER,
                 RUNNER_CAPACITY_MULTIPLIER,
                 RUNNER_MAINT_MULTIPLIER,
-                RUNNER_FUEL_MULTIPLIER,
+                RUNNER_DISTANCE_COST_MULTIPLIER,
             ),
             ShipArchetype::Coaster => (
                 COASTER_SPEED_MULTIPLIER,
                 COASTER_CAPACITY_MULTIPLIER,
                 COASTER_MAINT_MULTIPLIER,
-                COASTER_FUEL_MULTIPLIER,
+                COASTER_DISTANCE_COST_MULTIPLIER,
             ),
             ShipArchetype::Freighter => (
                 FREIGHTER_SPEED_MULTIPLIER,
                 FREIGHTER_CAPACITY_MULTIPLIER,
                 FREIGHTER_MAINT_MULTIPLIER,
-                FREIGHTER_FUEL_MULTIPLIER,
+                FREIGHTER_DISTANCE_COST_MULTIPLIER,
             ),
         }
     }
 
     pub fn effective_tuning(&self, base: &PlanningTuning) -> PlanningTuning {
         let mut tuned = *base;
-        tuned.confidence_decay_k =
-            (tuned.confidence_decay_k * self.strategy_genes.confidence_decay_scale).max(0.0001);
-        tuned.speculation_floor = (tuned.speculation_floor
-            * self.strategy_genes.speculation_floor_scale)
-            .clamp(0.01, 0.95);
-        tuned.learning_weight =
-            (tuned.learning_weight * self.strategy_genes.learning_weight_scale).max(0.0);
-        tuned.transport_cost_per_distance =
-            (tuned.transport_cost_per_distance * self.strategy_genes.transport_cost_scale).max(0.0);
-        tuned.cost_per_mile_factor = tuned.cost_per_mile_factor.clamp(0.2, 5.0);
-        tuned.capital_carry_cost_per_time = tuned.capital_carry_cost_per_time.max(0.0);
+        tuned.info_decay_rate =
+            (tuned.info_decay_rate * self.strategy_genes.confidence_decay_scale).max(0.0001);
+        tuned.global_friction_mult = tuned.global_friction_mult.clamp(0.2, 6.0);
+        tuned.market_spread = tuned.market_spread.clamp(0.02, 0.80);
         tuned
+    }
+
+    fn risk_tolerance(&self) -> f32 {
+        self.strategy_genes.risk_tolerance_scale.max(0.25)
+    }
+
+    fn cost_per_distance(&self) -> f32 {
+        BASE_COST_PER_DISTANCE * self.cost_per_distance_rate
+    }
+
+    fn cost_per_time(&self) -> f32 {
+        self.maintenance_rate * 0.20
+    }
+
+    fn map_span(island_positions: &[Vec2]) -> f32 {
+        if island_positions.is_empty() {
+            return 1.0;
+        }
+
+        let mut min_x = f32::INFINITY;
+        let mut max_x = f32::NEG_INFINITY;
+        let mut min_y = f32::INFINITY;
+        let mut max_y = f32::NEG_INFINITY;
+
+        for pos in island_positions {
+            min_x = min_x.min(pos.x);
+            max_x = max_x.max(pos.x);
+            min_y = min_y.min(pos.y);
+            max_y = max_y.max(pos.y);
+        }
+
+        (max_x - min_x).max(max_y - min_y).max(1.0)
+    }
+
+    fn max_route_distance_for_planning(&self, island_positions: &[Vec2]) -> f32 {
+        match self.profile_archetype_from_hull() {
+            ShipArchetype::Coaster => Self::map_span(island_positions) * COASTER_MAX_ROUTE_FRACTION,
+            _ => f32::INFINITY,
+        }
     }
 
     pub fn spawn_daughter(&mut self, mutation_strength: f32, rng: &mut impl Rng) -> Option<Ship> {
@@ -332,22 +357,8 @@ impl Ship {
                 MIN_GENE_SCALE,
                 MAX_GENE_SCALE,
             ),
-            speculation_floor_scale: mutate_gene_gaussian(
-                self.strategy_genes.speculation_floor_scale,
-                mutation_strength,
-                rng,
-                MIN_GENE_SCALE,
-                MAX_GENE_SCALE,
-            ),
-            learning_weight_scale: mutate_gene_gaussian(
-                self.strategy_genes.learning_weight_scale,
-                mutation_strength,
-                rng,
-                MIN_GENE_SCALE,
-                MAX_GENE_SCALE,
-            ),
-            transport_cost_scale: mutate_gene_gaussian(
-                self.strategy_genes.transport_cost_scale,
+            risk_tolerance_scale: mutate_gene_gaussian(
+                self.strategy_genes.risk_tolerance_scale,
                 mutation_strength,
                 rng,
                 MIN_GENE_SCALE,
@@ -363,6 +374,54 @@ impl Ship {
         self.target_island_id = Some(target_island_id);
         self.docked_at = None;
         self.planned_target_after_load = None;
+    }
+
+    pub fn seed_initial_market_view(
+        &mut self,
+        islands: &[Island],
+        current_tick: u64,
+        home_island_id: usize,
+        rng: &mut impl Rng,
+    ) {
+        let count = self.ledger.len().min(islands.len());
+        for (island_id, island) in islands.iter().enumerate().take(count) {
+            let mut prices = [0.0; RESOURCE_COUNT];
+            let mut inventories = [0.0; RESOURCE_COUNT];
+
+            for resource in Resource::iter() {
+                let idx = resource.idx();
+                let price_noise = rng.gen_range(0.82..1.18);
+                let inventory_noise = rng.gen_range(0.70..1.30);
+                prices[idx] = (island.local_prices[idx] * price_noise).max(0.0);
+                inventories[idx] = (island.inventory[idx] * inventory_noise).max(0.0);
+            }
+
+            let observed_cash = (island.cash * rng.gen_range(0.75..1.25)).max(0.0);
+            let observed_infra = (island.infrastructure_level * rng.gen_range(0.90..1.10)).max(0.0);
+            let age = rng.gen_range(40_u64..=420_u64);
+            let observed_tick = current_tick.saturating_sub(age);
+
+            self.ledger[island_id] = PriceEntry {
+                prices,
+                inventories,
+                cash: observed_cash,
+                infrastructure_level: observed_infra,
+                tick_updated: observed_tick,
+                last_seen_tick: observed_tick,
+            };
+        }
+
+        if home_island_id < count {
+            let island = &islands[home_island_id];
+            self.ledger[home_island_id] = PriceEntry {
+                prices: island.local_prices,
+                inventories: island.inventory,
+                cash: island.cash,
+                infrastructure_level: island.infrastructure_level,
+                tick_updated: current_tick,
+                last_seen_tick: current_tick,
+            };
+        }
     }
 
     pub fn docked_island(&self) -> Option<usize> {
@@ -383,21 +442,14 @@ impl Ship {
                 self.median_price_for_resource(resource)
             };
             let conservative_cargo_value =
-                (cargo_book_price * BID_PRICE_MULTIPLIER * amount).max(0.0);
+                (cargo_book_price * bid_multiplier(DEFAULT_MARKET_SPREAD) * amount).max(0.0);
             net_worth += conservative_cargo_value;
         }
         net_worth
     }
 
-    pub fn apply_maritime_friction(
-        &mut self,
-        dt: f32,
-        global_crowding_multiplier: f32,
-        cost_per_mile_factor: f32,
-    ) {
-        let mut labor_and_provisions = self.maintenance_rate
-            * dt.max(0.0)
-            * global_crowding_multiplier.max(1.0);
+    pub fn apply_maritime_friction(&mut self, dt: f32, global_friction_mult: f32) {
+        let mut labor_and_provisions = self.cost_per_time() * dt.max(0.0) * global_friction_mult;
         if self.docked_at.is_some() {
             labor_and_provisions *= DOCKED_PORT_FEE_MULTIPLIER;
         }
@@ -406,9 +458,8 @@ impl Ship {
             (self.total_cargo_volume() / self.max_cargo_volume.max(0.01)).clamp(0.0, 1.0);
         let wear_multiplier = 1.0 + cargo_load_ratio * HEAVY_LOAD_WEAR_MULTIPLIER;
         let rigging_and_repairs = self.last_step_distance.max(0.0)
-            * self.fuel_burn_rate
-            * RIGGING_REPAIR_COST_PER_DISTANCE
-            * cost_per_mile_factor.clamp(0.2, 5.0)
+            * self.cost_per_distance()
+            * global_friction_mult
             * wear_multiplier;
 
         self.cash -= labor_and_provisions + rigging_and_repairs;
@@ -435,8 +486,8 @@ impl Ship {
         self.total_cargo_volume()
     }
 
-    pub fn fuel_burn_rate(&self) -> f32 {
-        self.fuel_burn_rate
+    pub fn cost_per_distance_rate(&self) -> f32 {
+        self.cost_per_distance_rate
     }
 
     pub fn maintenance_rate(&self) -> f32 {
@@ -487,7 +538,7 @@ impl Ship {
         TRADE_ACTION_VOLUME / resource.volume_per_unit().max(0.01)
     }
 
-    fn best_unload_resource(&self, island: &Island) -> Option<Resource> {
+    fn best_unload_resource(&self, island: &Island, market_spread: f32) -> Option<Resource> {
         let mut best_resource = None;
         let mut best_sale_value = 0.0;
 
@@ -498,7 +549,7 @@ impl Ship {
                 continue;
             }
 
-            let bid_price = island.bid_price(resource);
+            let bid_price = island.bid_price(resource, market_spread);
             if !bid_price.is_finite() || bid_price <= 0.0 {
                 continue;
             }
@@ -556,12 +607,12 @@ impl Ship {
         self.cargo_changed_this_dock
     }
 
-    pub fn begin_dock_tick(&mut self, tuning: &PlanningTuning) {
+    pub fn begin_dock_tick(&mut self) {
         self.last_dock_action = DockAction::None;
         self.planned_target_after_load = None;
         self.cargo_changed_this_dock = false;
         self.just_sold_resource = None;
-        let decay = tuning.learning_decay.clamp(0.0, 1.0);
+        let decay = ROUTE_LEARNING_DECAY.clamp(0.0, 1.0);
         for score in &mut self.route_memory {
             *score *= decay;
         }
@@ -577,7 +628,7 @@ impl Ship {
             return self.last_dock_action;
         }
 
-        let Some(resource) = self.best_unload_resource(island) else {
+        let Some(resource) = self.best_unload_resource(island, tuning.market_spread) else {
             return self.last_dock_action;
         };
         let resource_idx = resource.idx();
@@ -591,7 +642,8 @@ impl Ship {
             return self.last_dock_action;
         }
 
-        let (sold_amount, gross_revenue) = island.sell_to_island(resource, requested_amount);
+        let (sold_amount, gross_revenue) =
+            island.sell_to_island(resource, requested_amount, tuning.market_spread);
         if sold_amount <= 0.0 || gross_revenue <= 0.0 {
             return self.last_dock_action;
         }
@@ -599,9 +651,8 @@ impl Ship {
         let sold_volume = sold_amount * resource.volume_per_unit();
         let raw_freight_cost = self.cargo_distance_accrued
             * sold_volume
-            * tuning.transport_cost_per_distance
-            * tuning.cost_per_mile_factor
-            * self.fuel_burn_rate;
+            * self.cost_per_distance()
+            * tuning.global_friction_mult;
         let net_revenue = gross_revenue - raw_freight_cost;
         self.cash += net_revenue;
 
@@ -609,7 +660,7 @@ impl Ship {
         if book_price > 0.0 && sold_amount > 0.0 && island_id < self.route_memory.len() {
             let sale_unit_price = net_revenue / sold_amount;
             let normalized_margin = (sale_unit_price - book_price) / (book_price + 1.0);
-            self.route_memory[island_id] += normalized_margin * tuning.learning_rate;
+            self.route_memory[island_id] += normalized_margin * ROUTE_LEARNING_RATE;
             self.route_memory[island_id] = self.route_memory[island_id].clamp(-1.5, 1.5);
         }
 
@@ -689,6 +740,7 @@ impl Ship {
 
         let utility_context = UtilityContext {
             island_positions: context.island_positions,
+            max_route_distance: self.max_route_distance_for_planning(context.island_positions),
             current_tick: context.current_tick,
             tuning: context.tuning,
             outbound_recent_departures: context.outbound_recent_departures,
@@ -704,7 +756,7 @@ impl Ship {
                 continue;
             }
 
-            let source_bid_price = island.bid_price(source_resource);
+            let source_bid_price = island.bid_price(source_resource, context.tuning.market_spread);
             if !source_bid_price.is_finite() || source_bid_price <= 0.0 {
                 continue;
             }
@@ -725,7 +777,7 @@ impl Ship {
                     continue;
                 }
 
-                let ask_price = island.ask_price(resource);
+                let ask_price = island.ask_price(resource, context.tuning.market_spread);
                 if !ask_price.is_finite() || ask_price <= 0.0 {
                     continue;
                 }
@@ -759,7 +811,7 @@ impl Ship {
                         continue;
                     }
 
-                    let (utility, _confidence) = self.calculate_utility(
+                    let utility = self.calculate_utility(
                         resource,
                         target_id,
                         ask_price,
@@ -782,8 +834,14 @@ impl Ship {
             }
         }
 
-        let Some((source_resource, resource, target_id, ask_price, mut acquired_amount, source_bid_price)) =
-            best_choice
+        let Some((
+            source_resource,
+            resource,
+            target_id,
+            ask_price,
+            mut acquired_amount,
+            source_bid_price,
+        )) = best_choice
         else {
             return self.last_dock_action;
         };
@@ -808,8 +866,8 @@ impl Ship {
         let net_volume_per_target_unit =
             target_volume_per_unit - source_units_per_target_unit * source_volume_per_unit;
         if net_volume_per_target_unit > 0.0 {
-            acquired_amount = acquired_amount
-                .min(self.remaining_cargo_volume() / net_volume_per_target_unit);
+            acquired_amount =
+                acquired_amount.min(self.remaining_cargo_volume() / net_volume_per_target_unit);
         }
         if acquired_amount <= 0.0 {
             return self.last_dock_action;
@@ -878,6 +936,7 @@ impl Ship {
         let mut best_utility = f32::NEG_INFINITY;
         let utility_context = UtilityContext {
             island_positions: context.island_positions,
+            max_route_distance: self.max_route_distance_for_planning(context.island_positions),
             current_tick: context.current_tick,
             tuning: context.tuning,
             outbound_recent_departures: context.outbound_recent_departures,
@@ -888,7 +947,7 @@ impl Ship {
                 continue;
             }
             let idx = resource.idx();
-            let local_price = island.ask_price(resource);
+            let local_price = island.ask_price(resource, context.tuning.market_spread);
             if !local_price.is_finite() || local_price <= 0.0 {
                 continue;
             }
@@ -914,7 +973,7 @@ impl Ship {
                     continue;
                 }
 
-                let (utility, _confidence) = self.calculate_utility(
+                let utility = self.calculate_utility(
                     resource,
                     target_id,
                     local_price,
@@ -958,7 +1017,8 @@ impl Ship {
             return self.last_dock_action;
         }
 
-        let (filled, total_cost) = island.buy_from_island(chosen_resource, requested);
+        let (filled, total_cost) =
+            island.buy_from_island(chosen_resource, requested, context.tuning.market_spread);
         if filled <= 0.0 {
             return self.last_dock_action;
         }
@@ -976,10 +1036,12 @@ impl Ship {
         self.cargo[idx] += filled;
         self.cargo_changed_this_dock = true;
         self.planned_target_after_load = Some(chosen_target);
-        let preexisting_volume = self.total_cargo_volume() - (filled * chosen_resource.volume_per_unit());
+        let preexisting_volume =
+            self.total_cargo_volume() - (filled * chosen_resource.volume_per_unit());
         let post_volume = self.total_cargo_volume();
         if post_volume > 0.0 {
-            self.cargo_distance_accrued = (self.cargo_distance_accrued * preexisting_volume.max(0.0)) / post_volume;
+            self.cargo_distance_accrued =
+                (self.cargo_distance_accrued * preexisting_volume.max(0.0)) / post_volume;
         }
         self.last_dock_action = DockAction::Bought;
         self.last_dock_action
@@ -1035,6 +1097,7 @@ impl Ship {
         if !self.has_no_cargo() {
             let utility_context = UtilityContext {
                 island_positions,
+                max_route_distance: self.max_route_distance_for_planning(island_positions),
                 current_tick,
                 tuning,
                 outbound_recent_departures,
@@ -1058,7 +1121,7 @@ impl Ship {
                             fallback_buy_price
                         };
 
-                        let (utility, _confidence) = self.calculate_utility(
+                        let utility = self.calculate_utility(
                             resource,
                             target_id,
                             reference_buy_price,
@@ -1079,8 +1142,6 @@ impl Ship {
 
             let mut best_target = None;
             let mut best_utility = f32::NEG_INFINITY;
-            let mut best_confidence = 0.0;
-            let mut candidates: Vec<(usize, f32, f32)> = Vec::new();
 
             for target_id in 0..self.ledger.len() {
                 if target_id == current_island_id {
@@ -1088,8 +1149,6 @@ impl Ship {
                 }
 
                 let mut destination_total_utility = 0.0;
-                let mut confidence_weighted_sum = 0.0;
-                let mut confidence_weight = 0.0;
                 let mut had_any_resource = false;
                 for resource in Resource::iter() {
                     let idx = resource.idx();
@@ -1105,7 +1164,7 @@ impl Ship {
                         fallback_buy_price
                     };
 
-                    let (utility, confidence) = self.calculate_utility(
+                    let utility = self.calculate_utility(
                         resource,
                         target_id,
                         reference_buy_price,
@@ -1114,8 +1173,6 @@ impl Ship {
                     );
                     if utility.is_finite() {
                         destination_total_utility += utility;
-                        confidence_weighted_sum += confidence * lot_size;
-                        confidence_weight += lot_size;
                         had_any_resource = true;
                     }
                 }
@@ -1123,80 +1180,14 @@ impl Ship {
                     continue;
                 }
 
-                let destination_confidence = if confidence_weight > 0.0 {
-                    (confidence_weighted_sum / confidence_weight).clamp(0.0, 1.0)
-                } else {
-                    0.0
-                };
-
-                candidates.push((target_id, destination_total_utility, destination_confidence));
-
                 if destination_total_utility > best_utility {
                     best_utility = destination_total_utility;
                     best_target = Some(target_id);
-                    best_confidence = destination_confidence;
                 }
-            }
-
-            if candidates.is_empty() {
-                return None;
             }
 
             if best_utility <= 0.0 {
                 return None;
-            }
-
-            let best_neglect_ticks = best_target
-                .map(|target_id| {
-                    current_tick.saturating_sub(self.ledger[target_id].last_seen_tick) as f32
-                })
-                .unwrap_or(0.0);
-            let neglect_boost = (best_neglect_ticks * 0.0008).min(0.20);
-
-            let speculation_chance = (tuning.speculation_floor
-                + (1.0 - best_confidence) * tuning.speculation_staleness_scale
-                + neglect_boost)
-                .clamp(tuning.speculation_floor, 0.85);
-
-            let mut rng = ::rand::thread_rng();
-            if rng.gen_bool(speculation_chance as f64) {
-                let mut scored: Vec<(usize, f32)> = candidates
-                    .into_iter()
-                    .map(|(target_id, utility, confidence)| {
-                        let uncertainty_bonus =
-                            (1.0 - confidence) * tuning.speculation_uncertainty_bonus;
-                        (target_id, utility + uncertainty_bonus)
-                    })
-                    .collect();
-
-                scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-
-                let top_k = scored.len().min(3);
-                if top_k == 0 {
-                    return best_target;
-                }
-
-                let top_slice = &scored[..top_k];
-                let temperature = (1.0 + tuning.speculation_uncertainty_bonus * 0.05).max(0.1);
-                let best_score = top_slice[0].1;
-
-                let mut weighted_sum = 0.0_f32;
-                let mut weighted: Vec<(usize, f32)> = Vec::with_capacity(top_k);
-                for (target_id, score) in top_slice.iter().copied() {
-                    let stabilized = ((score - best_score) / temperature).exp().max(0.001);
-                    weighted_sum += stabilized;
-                    weighted.push((target_id, stabilized));
-                }
-
-                let mut draw = rng.gen_range(0.0..weighted_sum.max(0.001));
-                for (target_id, weight) in weighted {
-                    draw -= weight;
-                    if draw <= 0.0 {
-                        return Some(target_id);
-                    }
-                }
-
-                return Some(top_slice[0].0);
             }
 
             return best_target;
@@ -1206,6 +1197,7 @@ impl Ship {
         let mut best_utility = f32::NEG_INFINITY;
         let utility_context = UtilityContext {
             island_positions,
+            max_route_distance: self.max_route_distance_for_planning(island_positions),
             current_tick,
             tuning,
             outbound_recent_departures,
@@ -1223,11 +1215,12 @@ impl Ship {
 
             let mut best_resource_utility = f32::NEG_INFINITY;
             for resource in Resource::iter() {
-                let buy_price = current_prices[resource.idx()] * ASK_PRICE_MULTIPLIER;
+                let buy_price =
+                    current_prices[resource.idx()] * ask_multiplier(tuning.market_spread);
                 let lot_size = self
                     .max_units_for_trade_action(resource)
                     .min(self.max_cargo_volume / resource.volume_per_unit().max(0.01));
-                let (utility, _confidence) = self.calculate_utility(
+                let utility = self.calculate_utility(
                     resource,
                     target_id,
                     buy_price,
@@ -1306,7 +1299,7 @@ impl Ship {
     ) -> f32 {
         let transit_time = distance / self.speed.max(1.0);
         let data_age = current_tick.saturating_sub(self.ledger[target_id].tick_updated) as f32;
-        let base_confidence = (-tuning.confidence_decay_k * (data_age + transit_time))
+        let base_confidence = (-tuning.info_decay_rate * (data_age + transit_time))
             .exp()
             .clamp(0.05, 1.0);
 
@@ -1331,29 +1324,32 @@ impl Ship {
         buy_price: f32,
         lot_size: f32,
         context: &UtilityContext<'_>,
-    ) -> (f32, f32) {
+    ) -> f32 {
         if target_id >= self.ledger.len() || target_id >= context.island_positions.len() {
-            return (f32::NEG_INFINITY, 0.0);
+            return f32::NEG_INFINITY;
         }
 
         if !buy_price.is_finite() || buy_price <= 0.0 {
-            return (f32::NEG_INFINITY, 0.0);
+            return f32::NEG_INFINITY;
         }
 
         let quoted_sell_price = self.ledger[target_id].prices[resource.idx()];
         let quoted_inventory = self.ledger[target_id].inventories[resource.idx()].max(0.0);
         let has_quoted_sell_price = quoted_sell_price.is_finite() && quoted_sell_price > 0.0;
         let median_market_price = self.median_price_for_resource(resource);
-        let quoted_bid_price = quoted_sell_price * BID_PRICE_MULTIPLIER;
+        let quoted_bid_price = quoted_sell_price * bid_multiplier(context.tuning.market_spread);
         let expected_sell_price = if has_quoted_sell_price {
             quoted_bid_price
         } else if median_market_price > 0.0 {
-            median_market_price * BID_PRICE_MULTIPLIER
+            median_market_price * bid_multiplier(context.tuning.market_spread)
         } else {
             buy_price
         };
 
         let distance = (self.pos - context.island_positions[target_id]).length();
+        if distance > context.max_route_distance {
+            return f32::NEG_INFINITY;
+        }
         let transit_time = distance / self.speed.max(1.0);
         let mut confidence = self.destination_confidence(
             target_id,
@@ -1374,7 +1370,7 @@ impl Ship {
         if quoted_island_cash <= BROKE_DESTINATION_BLOCK_CASH
             && data_age <= BROKE_DESTINATION_BLOCK_MAX_AGE
         {
-            return (f32::NEG_INFINITY, confidence);
+            return f32::NEG_INFINITY;
         }
         let fallback_cash = self
             .median_island_cash()
@@ -1390,7 +1386,7 @@ impl Ship {
         let available_storage = (INVENTORY_CARRYING_CAPACITY - quoted_inventory).max(0.0);
         let effective_lot_size = lot_size.max(0.0).min(available_storage);
         if effective_lot_size <= 0.0 {
-            return (f32::NEG_INFINITY, confidence);
+            return f32::NEG_INFINITY;
         }
 
         let gross_expected_revenue = expected_sell_price * effective_lot_size;
@@ -1406,18 +1402,21 @@ impl Ship {
         let expected_profit = real_expected_profit * confidence;
         let estimated_load_ratio = (effective_lot_size * resource.volume_per_unit().max(0.01)
             / self.max_cargo_volume.max(0.01))
-            .clamp(0.0, 1.0);
+        .clamp(0.0, 1.0);
         let wear_multiplier = 1.0 + estimated_load_ratio * HEAVY_LOAD_WEAR_MULTIPLIER;
         let rigging_repair_cost = distance
-            * context.tuning.transport_cost_per_distance
-            * context.tuning.cost_per_mile_factor
-            * self.fuel_burn_rate
+            * self.cost_per_distance()
+            * context.tuning.global_friction_mult
             * wear_multiplier;
-        let labor_provisions_trip_cost = transit_time * self.maintenance_rate;
+        let labor_provisions_trip_cost =
+            transit_time * self.cost_per_time() * context.tuning.global_friction_mult;
         let capital_carry_cost = buy_price
             * effective_lot_size
             * transit_time
-            * context.tuning.capital_carry_cost_per_time;
+            * self.cost_per_time()
+            * context.tuning.global_friction_mult;
+        let trip_cost_basis = rigging_repair_cost + labor_provisions_trip_cost + capital_carry_cost;
+        let staleness_risk_cost = (1.0 - confidence) * trip_cost_basis / self.risk_tolerance();
 
         let broke_revenue_threshold = gross_expected_revenue * BROKE_CASH_COVERAGE_RATIO;
         let recent_broke_factor = (1.0 - data_age / RECENT_BROKE_TICKS).clamp(0.0, 1.0);
@@ -1427,11 +1426,6 @@ impl Ship {
             0.0
         };
 
-        let last_seen_tick = self.ledger[target_id].last_seen_tick;
-        let neglect_ticks = context.current_tick.saturating_sub(last_seen_tick) as f32;
-        let neglect_bonus = (neglect_ticks * context.tuning.island_neglect_bonus_per_tick)
-            .min(context.tuning.island_neglect_bonus_cap);
-
         let industrial_bonus = if resource == Resource::Iron || resource == Resource::Timber {
             let infra_excess =
                 (self.ledger[target_id].infrastructure_level - INDUSTRIAL_INFRA_THRESHOLD).max(0.0);
@@ -1440,20 +1434,17 @@ impl Ship {
             0.0
         };
 
-        let utility = expected_profit
+        expected_profit
             - rigging_repair_cost
             - labor_provisions_trip_cost
             - capital_carry_cost
-            + neglect_bonus
+            - staleness_risk_cost
             + industrial_bonus
-            - broke_penalty;
-
-        (utility, confidence)
+            - broke_penalty
     }
 
     /// Move toward target. Returns the island id when docking this tick.
-    pub fn update(&mut self, dt: f32, cost_per_mile_factor: f32) -> Option<usize> {
-        let _ = cost_per_mile_factor;
+    pub fn update(&mut self, dt: f32) -> Option<usize> {
         let to_target = self.target - self.pos;
         let dist = to_target.length();
         self.last_step_distance = 0.0;

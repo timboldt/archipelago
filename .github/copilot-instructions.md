@@ -10,8 +10,9 @@ The `OLD/` directory contains an early prototype (different asset model) and sho
 
 - **Language:** Rust (edition 2021)
 - **Visualization/Input:** `macroquad`
-- **Parallelism:** `rayon` (ship planning and island production use `par_iter`)
-- **Math:** `glam` (or macroquad's built-in `Vec2`)
+- **Parallelism:** `rayon` (island economy + dock processing use `par_iter`)
+- **Randomization:** `rand`
+- **Math:** macroquad `Vec2`
 - **Enums:** `strum` / `strum_macros` for iterable enums
 
 ## Build & Run
@@ -29,11 +30,24 @@ cargo test <test_name>
 ### Key Structs
 
 ```rust
-enum Resource { Grain, Timber, Iron, Tools }
-type Inventory = [f32; 4];
+enum Resource { Grain, Timber, Iron, Tools, Spices }
+type Inventory = [f32; 5];
 
-struct PriceEntry { price: f32, tick_updated: u64 }
-type PriceLedger = Vec<PriceEntry>; // one entry per island
+struct PriceEntry {
+    prices: [f32; 5],
+    inventories: [f32; 5],
+    cash: f32,
+    infrastructure_level: f32,
+    tick_updated: u64,
+    last_seen_tick: u64,
+}
+type PriceLedger = Vec<PriceEntry>; // indexed by island id
+
+struct PlanningTuning {
+    global_friction_mult: f32,
+    info_decay_rate: f32,
+    market_spread: f32,
+}
 
 struct Island {
     id: usize,
@@ -41,49 +55,54 @@ struct Island {
     inventory: Inventory,
     production_rates: Inventory,
     consumption_rates: Inventory,
+    population: f32,
+    cash: f32,
+    infrastructure_level: f32,
+    local_prices: [f32; 5],
     ledger: PriceLedger,  // island's cached view of the whole economy
 }
 
 struct Ship {
+    // selected fields only
     pos: Vec2,
-    cargo: Option<(Resource, f32)>,
-    state: ShipState,     // Idle | Moving | Planning
+    cargo: Inventory,
     ledger: PriceLedger,  // ship's own knowledge of the world
     target_island_id: Option<usize>,
     speed: f32,
+    cash: f32,
 }
 ```
 
 ### Simulation Loop (on `World`)
 
 1. **Island Production/Consumption** (via `rayon::par_iter`):  
-   `inventory[r] += production_rates[r] * dt`  
-   `inventory[r] -= consumption_rates[r] * dt`  
-   Price: `price = base_cost / (inventory[r] + 1.0)`
+   Updates production/consumption, population, cash, infrastructure, and recomputes local prices.
 
-2. **Ship Planning** (via `rayon::par_iter`, ships in `Planning` state):  
-   Utility = `(potential_profit × confidence) - (distance × fuel_cost)`  
-   Confidence = `exp(-k × (current_tick - data_timestamp + transit_time))`  
-   Ships pick the island with maximum utility.
+2. **Ship Movement + Dock Processing**:  
+   - Ships move continuously each frame.
+   - Docked ships settle trade (sell / load / barter), sync ledgers via snapshot merge, then plan next destination using deterministic expected utility.
+   - Utility accounts for confidence-decayed information, spread-aware prices, market depth, storage headroom, distance/time costs, and staleness risk.
 
-3. **Handshake on Arrival** (ship reaches island):  
-   - **Trade:** sell cargo if island price is high; buy new cargo if local price is low.  
-   - **Ledger sync:** merge `ship.ledger` and `island.ledger` by keeping the entry with the higher `tick_updated` for each slot.
+3. **Maritime Friction + Lifecycle**:  
+   - Friction is auto-scaled by crowding (`active ships / target ships`), multiplied by `global_friction_mult`.
+   - Periodic fleet evolution culls weak ships and spawns daughters from wealthy ships.
 
 ### Visual Layer (macroquad)
 
 - Simulation space is ~5000×5000 mapped to screen via `Camera2D`.
-- `draw_islands()` — points color-coded by most abundant resource.
-- `draw_ships()` — small particles; color indicates cargo state.
-- `draw_ui()` — click an island to inspect its ledger vs. actual global state.
+- `draw_islands()` — island bar glyphs with macro counters.
+- `draw_ships()` — archetype-shape markers with cargo coloring.
+- `draw_ui()` — left HUD + selected ship/island inspector panels.
 - The visual loop is driven by `next_frame().await`; simulation runs synchronously within each frame.
 
 ## Key Conventions
 
 - `PriceLedger` is indexed by island `id` (`Vec<PriceEntry>` of length = number of islands). Always allocate ledgers at world-init time with a fixed island count.
-- The confidence decay constant `k` controls how "local" or "speculative" ship behavior is — tuning it is the primary emergence lever (Phase 3).
-- Resources are fixed-size arrays (`[f32; 4]`) rather than maps for cache efficiency; iterate over them using `Resource::iter()` via `strum`.
+- `PlanningTuning` is intentionally small and environmental: `global_friction_mult`, `info_decay_rate`, `market_spread`.
+- Resources are fixed-size arrays (`[f32; 5]`) rather than maps for cache efficiency; iterate over them using `Resource::iter()` via `strum`.
 - Ship ledger merges are the **only** mechanism for information propagation — there is no global broadcast.
+- Ships spawn with noisy/stale initial beliefs plus accurate home-port knowledge; do not reintroduce perfect global initialization.
+- Runtime controls currently: `[` / `]` for ship selection, `Shift+[` / `Shift+]` for island selection.
 
 ## Documentation Hygiene
 

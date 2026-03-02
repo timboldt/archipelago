@@ -5,8 +5,6 @@ use strum_macros::EnumIter;
 
 pub const RESOURCE_COUNT: usize = 5;
 pub const BASE_COSTS: [f32; RESOURCE_COUNT] = [20.0, 30.0, 45.0, 120.0, 180.0];
-pub const BID_PRICE_MULTIPLIER: f32 = 0.95;
-pub const ASK_PRICE_MULTIPLIER: f32 = 1.05;
 pub const INVENTORY_CARRYING_CAPACITY: f32 = 180.0;
 const INITIAL_POPULATION_MIN: f32 = 45.0;
 const INITIAL_POPULATION_MAX: f32 = 140.0;
@@ -51,6 +49,14 @@ const MAX_INFRASTRUCTURE_LEVEL: f32 = 3.5;
 const POPULATION_DISPLAY_SCALE: f32 = 150.0;
 const CASH_DISPLAY_SCALE: f32 = 800.0;
 const INFRASTRUCTURE_DISPLAY_MAX: f32 = 2.0;
+
+fn bid_multiplier(market_spread: f32) -> f32 {
+    (1.0 - market_spread.clamp(0.0, 1.8) * 0.5).max(0.05)
+}
+
+fn ask_multiplier(market_spread: f32) -> f32 {
+    1.0 + market_spread.clamp(0.0, 1.8) * 0.5
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, EnumIter)]
 #[repr(usize)]
@@ -318,7 +324,8 @@ impl Island {
         self.production_rates[timber_idx] =
             self.production_rates[timber_idx].min(non_grain_ceiling);
         self.production_rates[iron_idx] = self.production_rates[iron_idx].min(non_grain_ceiling);
-        self.production_rates[spices_idx] = self.production_rates[spices_idx].min(non_grain_ceiling);
+        self.production_rates[spices_idx] =
+            self.production_rates[spices_idx].min(non_grain_ceiling);
     }
 
     pub fn recompute_local_prices(&mut self, tick: u64) {
@@ -344,12 +351,17 @@ impl Island {
         }
     }
 
-    pub fn sell_to_island(&mut self, resource: Resource, amount: f32) -> (f32, f32) {
+    pub fn sell_to_island(
+        &mut self,
+        resource: Resource,
+        amount: f32,
+        market_spread: f32,
+    ) -> (f32, f32) {
         if amount <= 0.0 {
             return (0.0, 0.0);
         }
         let index = resource.idx();
-        let price = self.bid_price(resource);
+        let price = self.bid_price(resource, market_spread);
         if !price.is_finite() || price <= 0.0 || self.cash <= 0.0 {
             return (0.0, 0.0);
         }
@@ -366,7 +378,12 @@ impl Island {
         (filled, total_value)
     }
 
-    pub fn buy_from_island(&mut self, resource: Resource, requested_amount: f32) -> (f32, f32) {
+    pub fn buy_from_island(
+        &mut self,
+        resource: Resource,
+        requested_amount: f32,
+        market_spread: f32,
+    ) -> (f32, f32) {
         if requested_amount <= 0.0 {
             return (0.0, 0.0);
         }
@@ -377,17 +394,17 @@ impl Island {
             return (0.0, 0.0);
         }
         self.inventory[index] -= filled;
-        let total_cost = filled * self.ask_price(resource);
+        let total_cost = filled * self.ask_price(resource, market_spread);
         self.cash += total_cost;
         (filled, total_cost)
     }
 
-    pub fn bid_price(&self, resource: Resource) -> f32 {
-        self.local_prices[resource.idx()] * BID_PRICE_MULTIPLIER
+    pub fn bid_price(&self, resource: Resource, market_spread: f32) -> f32 {
+        self.local_prices[resource.idx()] * bid_multiplier(market_spread)
     }
 
-    pub fn ask_price(&self, resource: Resource) -> f32 {
-        self.local_prices[resource.idx()] * ASK_PRICE_MULTIPLIER
+    pub fn ask_price(&self, resource: Resource, market_spread: f32) -> f32 {
+        self.local_prices[resource.idx()] * ask_multiplier(market_spread)
     }
 
     pub fn draw(&self, world_units_per_pixel: f32) {
