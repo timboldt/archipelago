@@ -2,7 +2,7 @@ use ::rand::Rng;
 use macroquad::prelude::*;
 use rayon::prelude::*;
 
-use crate::island::Island;
+use crate::island::{Island, Resource, RESOURCE_COUNT};
 use crate::ship::{DockAction, LoadPlanningContext, PlanningTuning, Ship, STARTING_CASH};
 
 pub const WORLD_SIZE: f32 = 5000.0;
@@ -353,9 +353,9 @@ impl World {
         let panel_x = 14.0;
         let panel_y = 14.0;
         let panel_w = 260.0;
-        let panel_h = 238.0;
+        let panel_h = 256.0;
 
-        let mut total_inventory = [0.0_f32; 4];
+        let mut total_inventory = [0.0_f32; RESOURCE_COUNT];
         let mut total_population = 0.0_f32;
         let mut total_cash = 0.0_f32;
         let mut total_infrastructure = 0.0_f32;
@@ -383,6 +383,7 @@ impl World {
             ("Timber", GREEN),
             ("Iron", DARKGRAY),
             ("Tools", RED),
+            ("Spices", PURPLE),
             ("Empty ship", WHITE),
         ];
 
@@ -390,7 +391,7 @@ impl World {
             let y = panel_y + 42.0 + i as f32 * 16.0;
             draw_rectangle(panel_x + 10.0, y - 10.0, 10.0, 10.0, *color);
             draw_rectangle_lines(panel_x + 10.0, y - 10.0, 10.0, 10.0, 1.0, GRAY);
-            if i < 4 {
+            if i < RESOURCE_COUNT {
                 let counter = format!("{}: {:.0}", label, total_inventory[i]);
                 draw_text(&counter, panel_x + 28.0, y, 18.0, WHITE);
             } else {
@@ -404,7 +405,7 @@ impl World {
             total_infrastructure / self.islands.len() as f32
         };
         let tools_per_1k_pop = if total_population > 0.0 {
-            total_inventory[3] * 1000.0 / total_population
+            total_inventory[Resource::Tools.idx()] * 1000.0 / total_population
         } else {
             0.0
         };
@@ -418,27 +419,27 @@ impl World {
             self.planning_tuning.capital_carry_cost_per_time
         );
         let ship_count_text = format!("Ships: {}", self.ships.len());
-        draw_text(&pop_text, panel_x + 10.0, panel_y + 136.0, 18.0, WHITE);
-        draw_text(&cash_text, panel_x + 10.0, panel_y + 154.0, 18.0, WHITE);
-        draw_text(&infra_text, panel_x + 10.0, panel_y + 172.0, 18.0, WHITE);
+        draw_text(&pop_text, panel_x + 10.0, panel_y + 154.0, 18.0, WHITE);
+        draw_text(&cash_text, panel_x + 10.0, panel_y + 172.0, 18.0, WHITE);
+        draw_text(&infra_text, panel_x + 10.0, panel_y + 190.0, 18.0, WHITE);
         draw_text(
             &tools_pop_text,
-            panel_x + 10.0,
-            panel_y + 190.0,
-            18.0,
-            WHITE,
-        );
-        draw_text(
-            &carry_cost_text,
             panel_x + 10.0,
             panel_y + 208.0,
             18.0,
             WHITE,
         );
         draw_text(
-            &ship_count_text,
+            &carry_cost_text,
             panel_x + 10.0,
             panel_y + 226.0,
+            18.0,
+            WHITE,
+        );
+        draw_text(
+            &ship_count_text,
+            panel_x + 10.0,
+            panel_y + 244.0,
             18.0,
             WHITE,
         );

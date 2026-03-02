@@ -956,6 +956,7 @@ impl Ship {
                 Resource::Timber => GREEN,
                 Resource::Iron => DARKGRAY,
                 Resource::Tools => RED,
+                Resource::Spices => PURPLE,
             },
             None => WHITE,
         };

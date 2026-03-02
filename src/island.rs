@@ -3,8 +3,8 @@ use macroquad::prelude::*;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
-pub const RESOURCE_COUNT: usize = 4;
-pub const BASE_COSTS: [f32; RESOURCE_COUNT] = [20.0, 30.0, 45.0, 120.0];
+pub const RESOURCE_COUNT: usize = 5;
+pub const BASE_COSTS: [f32; RESOURCE_COUNT] = [20.0, 30.0, 45.0, 120.0, 180.0];
 pub const BID_PRICE_MULTIPLIER: f32 = 0.95;
 pub const ASK_PRICE_MULTIPLIER: f32 = 1.05;
 pub const INVENTORY_CARRYING_CAPACITY: f32 = 180.0;
@@ -39,6 +39,7 @@ const INDUSTRIAL_LABOR_SCALING: f32 = 0.012;
 const SCARCITY_LOG_SCALE: f32 = 2.4;
 const SCARCITY_REFERENCE: f32 = 120.0;
 const SPECIALIZATION_ZERO_PROBABILITY: f32 = 0.20;
+const SPICE_SPECIALIZATION_ZERO_PROBABILITY: f32 = 0.65;
 const FOCUS_PRODUCTION_BOOST: f32 = 1.9;
 const NON_FOCUS_PRODUCTION_SCALE: f32 = 0.78;
 const TOOLS_PRODUCTIVITY_CAP: f32 = 2.0;
@@ -58,6 +59,7 @@ pub enum Resource {
     Timber,
     Iron,
     Tools,
+    Spices,
 }
 
 impl Resource {
@@ -120,10 +122,18 @@ impl Island {
                         rng.gen_range(0.35..1.6)
                     }
                 }
+                Resource::Spices => {
+                    if rng.gen_bool(SPICE_SPECIALIZATION_ZERO_PROBABILITY as f64) {
+                        0.0
+                    } else {
+                        rng.gen_range(0.08..0.45)
+                    }
+                }
             };
             consumption_rates[index] = match resource {
                 Resource::Grain => rng.gen_range(0.8..2.2),
                 Resource::Tools => rng.gen_range(0.1..0.5),
+                Resource::Spices => rng.gen_range(0.02..0.16),
                 Resource::Timber | Resource::Iron => rng.gen_range(0.05..0.4),
             };
         }
@@ -138,12 +148,18 @@ impl Island {
             }
         }
 
-        let focus_resource = match rng.gen_range(0..3) {
+        let focus_resource = match rng.gen_range(0..4) {
             0 => Resource::Grain,
             1 => Resource::Timber,
-            _ => Resource::Iron,
+            2 => Resource::Iron,
+            _ => Resource::Spices,
         };
-        for resource in [Resource::Grain, Resource::Timber, Resource::Iron] {
+        for resource in [
+            Resource::Grain,
+            Resource::Timber,
+            Resource::Iron,
+            Resource::Spices,
+        ] {
             let index = resource.idx();
             if resource == focus_resource {
                 production_rates[index] *= FOCUS_PRODUCTION_BOOST;
@@ -282,6 +298,7 @@ impl Island {
         let grain_idx = Resource::Grain.idx();
         let timber_idx = Resource::Timber.idx();
         let iron_idx = Resource::Iron.idx();
+        let spices_idx = Resource::Spices.idx();
 
         self.production_rates[grain_idx] =
             self.production_rates[grain_idx].max(GRAIN_SURVIVAL_PRODUCTION_FLOOR);
@@ -291,6 +308,7 @@ impl Island {
         self.production_rates[timber_idx] =
             self.production_rates[timber_idx].min(non_grain_ceiling);
         self.production_rates[iron_idx] = self.production_rates[iron_idx].min(non_grain_ceiling);
+        self.production_rates[spices_idx] = self.production_rates[spices_idx].min(non_grain_ceiling);
     }
 
     pub fn recompute_local_prices(&mut self, tick: u64) {
@@ -363,10 +381,11 @@ impl Island {
     }
 
     pub fn draw(&self, world_units_per_pixel: f32) {
-        let chart_width = 20.0 * world_units_per_pixel;
-        let chart_height = 14.0 * world_units_per_pixel;
         let bar_width = 4.0 * world_units_per_pixel;
         let bar_gap = 1.0 * world_units_per_pixel;
+        let chart_width =
+            (RESOURCE_COUNT as f32 * bar_width) + ((RESOURCE_COUNT as f32 - 1.0) * bar_gap);
+        let chart_height = 14.0 * world_units_per_pixel;
         let panel_padding = 2.0 * world_units_per_pixel;
         let border_thickness = 1.0 * world_units_per_pixel;
         let status_gap = 2.0 * world_units_per_pixel;
@@ -429,6 +448,7 @@ impl Island {
                 Resource::Timber => GREEN,
                 Resource::Iron => DARKGRAY,
                 Resource::Tools => RED,
+                Resource::Spices => PURPLE,
             };
 
             draw_rectangle(x, y, bar_width, bar_height, color);

@@ -39,7 +39,7 @@ cargo +nightly fmt
 
 - **World size:** 5000×5000 simulation space rendered with a `macroquad` camera.
 - **Island spawn spacing:** Islands spawn with a minimum separation target to reduce chart/icon overlap in dense regions.
-- **Island visuals:** Islands are drawn as compact 4-bar charts for Grain, Timber, Iron, and Tools abundance.
+- **Island visuals:** Islands are drawn as compact 5-bar charts for Grain, Timber, Iron, Tools, and Spices abundance.
 - **Island status bars:** Each island chart now includes three horizontal bars beneath it for Population, Cash, and Infrastructure.
 - **Chart readability:** Island chart dimensions are scaled from current view units-per-pixel so bars stay legible across zoom/viewport changes.
 - **UI legend:** A fixed top-left legend maps resource colors (and empty ships) for quick visual decoding.
@@ -47,9 +47,9 @@ cargo +nightly fmt
 - **Macro counters:** The same panel also shows global Population, global Cash, average Industry (infrastructure level), and a `Tools / 1k pop` health ratio.
 - **Tuning HUD:** The same panel shows live `capital_carry_cost_per_time`.
 - **Fleet HUD:** The panel also shows the current ship count.
-- **Resources:** Grain, Timber, Iron, Tools.
+- **Resources:** Grain, Timber, Iron, Tools, Spices.
 - **Prices:** Island-local with a damped scarcity curve (log-shaped pressure) to avoid extreme low-inventory spikes.
-- **Price incentives:** Tools base value is elevated (120) to better reward long-haul industrial trade.
+- **Price incentives:** Tools base value is elevated (120), and Spices are modeled as a luxury good with a high base value (180).
 - **Population engine:** Islands now track `population` with a smooth (non-binary) grain-balance response curve; grain abundance supports growth while scarcity increases shrink pressure gradually.
 - **Production dynamics:** Tier-1 goods (Grain, Timber, Iron) are labor-driven and scale with population (plus logistic damping), so larger islands produce and consume more.
 - **Differentiated consumption:** Grain is the dominant population sink, Tools are moderate/durable, and Timber/Iron passive consumption is low so industrial inputs can accumulate.
@@ -60,6 +60,7 @@ cargo +nightly fmt
 - **Industrial throughput:** Tool fabrication now runs with a moderated base rate (`0.45`) and moderated output per batch (`2.2`) to curb long-run tools overshoot while preserving replenishment.
 - **Supply-chain rebalance:** Timber extraction is now biased higher than iron extraction, and tool fabrication consumes more iron per batch while producing more tools, which helps drain iron gluts and raise tool availability.
 - **Comparative advantage:** Islands are now initialized with partial resource scarcity (including forced-zero extraction in some resources) and a boosted focus resource, creating stronger specialization and trade dependency.
+- **Luxury specialization:** Spices are intentionally rarer at production time than staple resources, creating higher-value but less ubiquitous trade opportunities.
 - **Specialization tuning:** Timber/Iron zero-production probability is reduced to `0.20` to preserve baseline raw-material flow while still allowing specialization.
 - **Survival safety net:** If an island falls to minimum population while starving, it automatically re-prioritizes grain extraction to restart its local economy.
 - **Tools as multiplier:** Tool stock boosts raw extraction productivity up to a cap, creating industrial demand for tools beyond pure arbitrage.
