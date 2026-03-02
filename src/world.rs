@@ -6,6 +6,9 @@ use crate::island::Island;
 use crate::ship::{DockAction, LoadPlanningContext, PlanningTuning, Ship, STARTING_CASH};
 
 pub const WORLD_SIZE: f32 = 5000.0;
+const ISLAND_SPAWN_MARGIN: f32 = 200.0;
+const MIN_ISLAND_SPAWN_DISTANCE: f32 = 140.0;
+const ISLAND_POSITION_ATTEMPTS: usize = 40;
 const ROUTE_HISTORY_WINDOW_TICKS: usize = 10;
 const SCUTTLE_THRESHOLD_MULTIPLIER: f32 = 0.50;
 const BIRTH_THRESHOLD_MULTIPLIER: f32 = 5.0;
@@ -27,14 +30,45 @@ impl World {
     pub fn new(num_islands: usize, num_ships: usize) -> Self {
         let mut rng = ::rand::thread_rng();
 
-        let islands: Vec<Island> = (0..num_islands)
-            .map(|id| {
-                let pos = vec2(
-                    rng.gen_range(200.0..WORLD_SIZE - 200.0),
-                    rng.gen_range(200.0..WORLD_SIZE - 200.0),
+        let mut island_positions: Vec<Vec2> = Vec::with_capacity(num_islands);
+        for _ in 0..num_islands {
+            let mut best_candidate = vec2(
+                rng.gen_range(ISLAND_SPAWN_MARGIN..WORLD_SIZE - ISLAND_SPAWN_MARGIN),
+                rng.gen_range(ISLAND_SPAWN_MARGIN..WORLD_SIZE - ISLAND_SPAWN_MARGIN),
+            );
+            let mut best_min_distance = island_positions
+                .iter()
+                .map(|existing| best_candidate.distance(*existing))
+                .fold(f32::INFINITY, f32::min);
+
+            for _ in 0..ISLAND_POSITION_ATTEMPTS {
+                let candidate = vec2(
+                    rng.gen_range(ISLAND_SPAWN_MARGIN..WORLD_SIZE - ISLAND_SPAWN_MARGIN),
+                    rng.gen_range(ISLAND_SPAWN_MARGIN..WORLD_SIZE - ISLAND_SPAWN_MARGIN),
                 );
-                Island::new(id, pos, num_islands, &mut rng)
-            })
+                let min_distance = island_positions
+                    .iter()
+                    .map(|existing| candidate.distance(*existing))
+                    .fold(f32::INFINITY, f32::min);
+
+                if min_distance >= MIN_ISLAND_SPAWN_DISTANCE {
+                    best_candidate = candidate;
+                    break;
+                }
+
+                if min_distance > best_min_distance {
+                    best_min_distance = min_distance;
+                    best_candidate = candidate;
+                }
+            }
+
+            island_positions.push(best_candidate);
+        }
+
+        let islands: Vec<Island> = island_positions
+            .into_iter()
+            .enumerate()
+            .map(|(id, pos)| Island::new(id, pos, num_islands, &mut rng))
             .collect();
 
         // Ships start docked at a random island with randomised speeds.

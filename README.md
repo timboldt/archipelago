@@ -38,6 +38,7 @@ cargo +nightly fmt
 ## Simulation Notes
 
 - **World size:** 5000×5000 simulation space rendered with a `macroquad` camera.
+- **Island spawn spacing:** Islands spawn with a minimum separation target to reduce chart/icon overlap in dense regions.
 - **Island visuals:** Islands are drawn as compact 4-bar charts for Grain, Timber, Iron, and Tools abundance.
 - **Island status bars:** Each island chart now includes three horizontal bars beneath it for Population, Cash, and Infrastructure.
 - **Chart readability:** Island chart dimensions are scaled from current view units-per-pixel so bars stay legible across zoom/viewport changes.
