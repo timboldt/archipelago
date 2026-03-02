@@ -40,14 +40,20 @@ cargo +nightly fmt
 - **World size:** 5000×5000 simulation space rendered with a `macroquad` camera.
 - **Island spawn spacing:** Islands spawn with a minimum separation target to reduce chart/icon overlap in dense regions.
 - **Island visuals:** Islands are drawn as compact 5-bar charts for Grain, Timber, Iron, Tools, and Spices abundance.
+- **Ship visuals:** Ship shape encodes archetype (Freighter = square, Runner = triangle, Coaster = circle), and ship color reflects whichever cargo resource is largest by onboard value.
 - **Island status bars:** Each island chart now includes three horizontal bars beneath it for Population, Cash, and Infrastructure.
 - **Chart readability:** Island chart dimensions are scaled from current view units-per-pixel so bars stay legible across zoom/viewport changes.
 - **UI legend:** A fixed top-left legend maps resource colors (and empty ships) for quick visual decoding.
+- **Ship shape key:** The same panel includes a compact ship-shape legend (Runner triangle, Freighter square, Coaster circle).
 - **Legend counters:** The legend now shows total archipelago inventory beside each resource label.
 - **Macro counters:** The same panel also shows global Population, global Cash, average Industry (infrastructure level), and a `Tools / 1k pop` health ratio.
-- **Tuning HUD:** The same panel shows live `capital_carry_cost_per_time`.
-- **Fleet HUD:** The panel also shows the current ship count.
+- **Tuning HUD:** The left panel still shows live `capital_carry_cost_per_time`.
+- **Fleet HUD:** The panel shows current ship count plus archetype mix (`R/F/C` = Runner/Freighter/Coaster).
+- **Ship inspector HUD:** A top-right panel shows one selected ship's details (archetype, status, speed, cargo volume usage, fuel/maintenance rates, cash, and dominant cargo by value).
+- **Selection highlight:** The currently selected ship is marked in world space with a red ring.
+- **Island inspector HUD:** A second top-right panel shows one selected island's details (population, cash, infrastructure, inventory mix, and local prices).
 - **Resources:** Grain, Timber, Iron, Tools, Spices.
+- **Cargo volume:** Resources have per-unit volume; Grain is bulky while Tools/Spices are compact, so value density matters for ship loading.
 - **Prices:** Island-local with a damped scarcity curve (log-shaped pressure) to avoid extreme low-inventory spikes.
 - **Price incentives:** Tools base value is elevated (120), and Spices are modeled as a luxury good with a high base value (180).
 - **Population engine:** Islands now track `population` with a smooth (non-binary) grain-balance response curve; grain abundance supports growth while scarcity increases shrink pressure gradually.
@@ -72,7 +78,7 @@ cargo +nightly fmt
 - **Pair-based load selection:** Empty ships score full `(local resource -> destination island)` pairs and buy the resource from the best pair, rather than picking the cheapest local good first.
 - **Anti-roundtrip guard:** A ship will not immediately reload the same resource it just sold in the same dock cycle.
 - **Information flow:** Price ledgers are merged only during ship-island docking interactions, with a dedicated parallel per-island buffered merge and stable snapshot reads so island world-view does not shift mid-tick due to ship-processing order.
-- **Planning:** Route selection uses an expected-value utility (`(expected unit margin × lot size × confidence) - fuel cost`) with confidence decay from data staleness + transit latency, plus probabilistic speculation for route diversity.
+- **Planning:** Route selection uses an expected-value utility over volume-constrained lot sizes (`(expected unit margin × tradable units × confidence) - fuel - transit maintenance`) with confidence decay from data staleness + transit latency, plus probabilistic speculation for route diversity.
 - **Capital carry cost:** Utility now includes a transit-time capital lock-up penalty and high-price risk attenuation, reducing over-selection of expensive cargo when long-haul uncertainty is high.
 - **Liquidity-aware planning:** Ship ledgers now gossip destination `cash`, and route utility caps expected revenue by known market depth so traders avoid chasing phantom high prices at bankrupt islands.
 - **Storage-aware planning:** Ship ledgers also gossip inventory snapshots; utility discounts destination demand by available storage headroom so traders avoid over-delivering into saturated markets.
@@ -86,12 +92,16 @@ cargo +nightly fmt
 - **Outlier rescue:** Each actor gossips a `last_seen_tick` estimate per island through ledgers; stale/rarely seen islands receive a capped neglect bonus during planning.
 - **Anti-herding:** Planning applies a pheromone-style route signal over the last 10 ticks: if many ships recently left `A -> B`, confidence in `B`'s quoted prices is attenuated by approximately `1/N` for ships departing from `A`.
 - **Ship learning:** Each ship maintains a decaying destination memory updated by realized trade margins, and this memory biases future route utility.
-- **Wealth tax / upkeep:** Every tick, each ship pays a tiny fixed maintenance cost from cash, so persistently unprofitable traders eventually fail the scuttle threshold and are replaced by fitter descendants without collapsing the whole fleet.
+- **Ship trade-off triangle:** Each ship now carries coupled hull traits (size + efficiency) that jointly determine speed, cargo volume capacity, fuel burn, and ongoing maintenance; hull size strongly anchors speed class so runners are visibly faster while freighters are slower.
+- **Archetype profiles:** Hull bands map to explicit profiles with clear separation: Runner (`speed≈1.5x`, `capacity≈0.75x`, `maintenance≈1.5x`), Coaster (`1.0x`, `1.0x`, `0.75x`), Freighter (`0.75x`, `2.0x`, `1.0x`) before efficiency modulation.
+- **Operational niches:** Mutation and selection can produce fast runners (high speed/low capacity), bulk haulers (high capacity/lower speed), and efficient coasters (lower burn/maintenance).
+- **Wealth tax / upkeep:** Every tick, each ship now pays its own trait-derived maintenance cost from cash, so persistently unprofitable traders eventually fail the scuttle threshold and are replaced by fitter descendants without collapsing the whole fleet.
 - **Lifecycle selection:** Fleet composition evolves over time: low-cash ships are retired, while wealthy docked ships split into daughter ships with small Gaussian strategy mutations.
 - **Trader phenotypes:** Mutated strategy genes now include risk tolerance (`confidence_decay_k` scaling: confident long-range vs cynical local traders).
 - **Dock cadence:** Ships that sell on a tick stay docked for at least that tick (no immediate departure while empty), then can reload and depart on a following tick.
 - **Tuning controls:** `main.rs` exposes planning/speculation/learning constants (`confidence_decay_k`, `speculation_floor`, `speculation_staleness_scale`, `speculation_uncertainty_bonus`, `learning_rate`, `learning_decay`, `learning_weight`, `transport_cost_per_distance`, `capital_carry_cost_per_time`, `island_neglect_bonus_per_tick`, `island_neglect_bonus_cap`) and applies them via `World::set_planning_tuning(...)`.
-- **Live tuning:** Press `[` and `]` during runtime to decrease/increase `capital_carry_cost_per_time`.
+- **Ship selection controls:** Press `[` and `]` during runtime to cycle the selected ship in the top-right inspector panel.
+- **Island selection controls:** Press `{` and `}` (Shift + `[` / Shift + `]`) to cycle the selected island in the island inspector panel.
 
 ## Tech Stack (Current)
 

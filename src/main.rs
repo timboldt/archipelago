@@ -23,9 +23,8 @@ async fn main() {
     const CAPITAL_CARRY_COST_PER_TIME: f32 = 0.0020;
     const ISLAND_NEGLECT_BONUS_PER_TICK: f32 = 0.008;
     const ISLAND_NEGLECT_BONUS_CAP: f32 = 22.0;
-    const CAPITAL_CARRY_COST_STEP: f32 = 0.0002;
 
-    let mut planning_tuning = PlanningTuning {
+    let planning_tuning = PlanningTuning {
         confidence_decay_k: CONFIDENCE_DECAY_K,
         speculation_floor: SPECULATION_FLOOR,
         speculation_staleness_scale: SPECULATION_STALENESS_SCALE,
@@ -43,25 +42,25 @@ async fn main() {
     world.set_planning_tuning(planning_tuning);
 
     loop {
-        let mut tuning_changed = false;
+        let shift_down = is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift);
         if is_key_pressed(KeyCode::LeftBracket) {
-            planning_tuning.capital_carry_cost_per_time =
-                (planning_tuning.capital_carry_cost_per_time - CAPITAL_CARRY_COST_STEP)
-                    .clamp(0.0, 0.01);
-            tuning_changed = true;
+            if shift_down {
+                world.select_previous_island();
+            } else {
+                world.select_previous_ship();
+            }
         }
         if is_key_pressed(KeyCode::RightBracket) {
-            planning_tuning.capital_carry_cost_per_time =
-                (planning_tuning.capital_carry_cost_per_time + CAPITAL_CARRY_COST_STEP)
-                    .clamp(0.0, 0.01);
-            tuning_changed = true;
-        }
-        if tuning_changed {
-            world.set_planning_tuning(planning_tuning);
+            if shift_down {
+                world.select_next_island();
+            } else {
+                world.select_next_ship();
+            }
         }
 
-        // Camera maps simulation space (WORLD_SIZE x WORLD_SIZE) to the screen.
-        let camera = Camera2D::from_display_rect(Rect::new(0.0, 0.0, WORLD_SIZE, WORLD_SIZE));
+        // Camera maps simulation space (WORLD_SIZE x WORLD_SIZE) to the screen,
+        // with inverted world Y so world-space icons render upright.
+        let camera = Camera2D::from_display_rect(Rect::new(0.0, WORLD_SIZE, WORLD_SIZE, -WORLD_SIZE));
         set_camera(&camera);
 
         world.update(get_frame_time());

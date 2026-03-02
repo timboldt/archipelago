@@ -66,6 +66,16 @@ impl Resource {
     pub fn idx(self) -> usize {
         self as usize
     }
+
+    pub fn volume_per_unit(self) -> f32 {
+        match self {
+            Resource::Grain => 1.0,
+            Resource::Timber => 0.85,
+            Resource::Iron => 0.75,
+            Resource::Tools => 0.2,
+            Resource::Spices => 0.2,
+        }
+    }
 }
 
 pub type Inventory = [f32; RESOURCE_COUNT];
