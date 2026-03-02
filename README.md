@@ -47,7 +47,7 @@ cargo +nightly fmt
 - **Ship shape key:** The same panel includes a compact ship-shape legend (Runner triangle, Freighter square, Coaster circle).
 - **Legend counters:** The legend now shows total archipelago inventory beside each resource label.
 - **Macro counters:** The same panel also shows global Population, global Cash, average Industry (infrastructure level), and a `Tools / 1k pop` health ratio.
-- **Tuning HUD:** The left panel still shows live `capital_carry_cost_per_time`.
+- **Tuning HUD:** The left panel shows live `capital_carry_cost_per_time` and a global `cost_per_mile_factor` for ship economics.
 - **Fleet HUD:** The panel shows current ship count plus archetype mix (`R/F/C` = Runner/Freighter/Coaster).
 - **Ship inspector HUD:** A top-right panel shows one selected ship's details (archetype, status, speed, cargo volume usage, fuel/maintenance rates, cash, and dominant cargo by value).
 - **Selection highlight:** The currently selected ship is marked in world space with a red ring.
@@ -74,7 +74,8 @@ cargo +nightly fmt
 - **Liquidity stabilization:** Islands also generate modest endogenous cash from population activity and industrial throughput to avoid system-wide insolvency cascades.
 - **Operating costs:** Islands pay ongoing population/infrastructure upkeep, providing a continuous cash sink that limits runaway monetary growth.
 - **Capital sink:** Cash-rich islands reinvest excess capital into infrastructure growth with a lower trigger threshold and higher conversion efficiency, feeding industrial capacity sooner.
-- **Transport cost:** Cargo accrues freight cost while traveling; planning accounts for projected freight and realized P&L applies a capped freight deduction.
+- **Transport cost:** Cargo accrues freight cost while traveling; planning accounts for projected freight and realized P&L applies the full accrued freight deduction.
+- **Transit insolvency:** Ships now pay travel burn continuously while moving and can go negative cash in transit.
 - **Pair-based load selection:** Empty ships score full `(local resource -> destination island)` pairs and buy the resource from the best pair, rather than picking the cheapest local good first.
 - **Anti-roundtrip guard:** A ship will not immediately reload the same resource it just sold in the same dock cycle.
 - **Information flow:** Price ledgers are merged only during ship-island docking interactions, with a dedicated parallel per-island buffered merge and stable snapshot reads so island world-view does not shift mid-tick due to ship-processing order.
@@ -96,12 +97,14 @@ cargo +nightly fmt
 - **Archetype profiles:** Hull bands map to explicit profiles with clear separation: Runner (`speed≈1.5x`, `capacity≈0.75x`, `maintenance≈1.5x`), Coaster (`1.0x`, `1.0x`, `0.75x`), Freighter (`0.75x`, `2.0x`, `1.0x`) before efficiency modulation.
 - **Operational niches:** Mutation and selection can produce fast runners (high speed/low capacity), bulk haulers (high capacity/lower speed), and efficient coasters (lower burn/maintenance).
 - **Wealth tax / upkeep:** Every tick, each ship now pays its own trait-derived maintenance cost from cash, so persistently unprofitable traders eventually fail the scuttle threshold and are replaced by fitter descendants without collapsing the whole fleet.
-- **Lifecycle selection:** Fleet composition evolves over time: low-cash ships are retired, while wealthy docked ships split into daughter ships with small Gaussian strategy mutations.
+- **Bankruptcy failure:** If a ship arrives deeply insolvent and cannot recover via dock settlement (sell/barter phase), it is culled immediately (using a negative-cash floor rather than zero).
+- **Lifecycle selection:** Fleet composition evolves over time: low-cash ships are retired, while wealthy ships can split into daughter ships with small Gaussian strategy mutations (not restricted to docked-only parents).
 - **Trader phenotypes:** Mutated strategy genes now include risk tolerance (`confidence_decay_k` scaling: confident long-range vs cynical local traders).
 - **Dock cadence:** Ships that sell on a tick stay docked for at least that tick (no immediate departure while empty), then can reload and depart on a following tick.
 - **Tuning controls:** `main.rs` exposes planning/speculation/learning constants (`confidence_decay_k`, `speculation_floor`, `speculation_staleness_scale`, `speculation_uncertainty_bonus`, `learning_rate`, `learning_decay`, `learning_weight`, `transport_cost_per_distance`, `capital_carry_cost_per_time`, `island_neglect_bonus_per_tick`, `island_neglect_bonus_cap`) and applies them via `World::set_planning_tuning(...)`.
 - **Ship selection controls:** Press `[` and `]` during runtime to cycle the selected ship in the top-right inspector panel.
 - **Island selection controls:** Press `{` and `}` (Shift + `[` / Shift + `]`) to cycle the selected island in the island inspector panel.
+- **Cost tuning controls:** Press `-` and `=` during runtime to decrease/increase `cost_per_mile_factor` (global ship operating cost per mile multiplier).
 
 ## Tech Stack (Current)
 

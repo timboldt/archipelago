@@ -20,11 +20,13 @@ async fn main() {
     const LEARNING_DECAY: f32 = 0.98;
     const LEARNING_WEIGHT: f32 = 14.0;
     const TRANSPORT_COST_PER_DISTANCE: f32 = 0.00012;
+    const COST_PER_MILE_FACTOR: f32 = 1.0;
+    const COST_PER_MILE_FACTOR_STEP: f32 = 0.05;
     const CAPITAL_CARRY_COST_PER_TIME: f32 = 0.0020;
     const ISLAND_NEGLECT_BONUS_PER_TICK: f32 = 0.008;
     const ISLAND_NEGLECT_BONUS_CAP: f32 = 22.0;
 
-    let planning_tuning = PlanningTuning {
+    let mut planning_tuning = PlanningTuning {
         confidence_decay_k: CONFIDENCE_DECAY_K,
         speculation_floor: SPECULATION_FLOOR,
         speculation_staleness_scale: SPECULATION_STALENESS_SCALE,
@@ -33,6 +35,7 @@ async fn main() {
         learning_decay: LEARNING_DECAY,
         learning_weight: LEARNING_WEIGHT,
         transport_cost_per_distance: TRANSPORT_COST_PER_DISTANCE,
+        cost_per_mile_factor: COST_PER_MILE_FACTOR,
         capital_carry_cost_per_time: CAPITAL_CARRY_COST_PER_TIME,
         island_neglect_bonus_per_tick: ISLAND_NEGLECT_BONUS_PER_TICK,
         island_neglect_bonus_cap: ISLAND_NEGLECT_BONUS_CAP,
@@ -43,6 +46,7 @@ async fn main() {
 
     loop {
         let shift_down = is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift);
+        let mut tuning_changed = false;
         if is_key_pressed(KeyCode::LeftBracket) {
             if shift_down {
                 world.select_previous_island();
@@ -56,6 +60,21 @@ async fn main() {
             } else {
                 world.select_next_ship();
             }
+        }
+        if is_key_pressed(KeyCode::Minus) {
+            planning_tuning.cost_per_mile_factor =
+                (planning_tuning.cost_per_mile_factor - COST_PER_MILE_FACTOR_STEP)
+                    .clamp(0.2, 5.0);
+            tuning_changed = true;
+        }
+        if is_key_pressed(KeyCode::Equal) {
+            planning_tuning.cost_per_mile_factor =
+                (planning_tuning.cost_per_mile_factor + COST_PER_MILE_FACTOR_STEP)
+                    .clamp(0.2, 5.0);
+            tuning_changed = true;
+        }
+        if tuning_changed {
+            world.set_planning_tuning(planning_tuning);
         }
 
         // Camera maps simulation space (WORLD_SIZE x WORLD_SIZE) to the screen,

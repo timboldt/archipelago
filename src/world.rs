@@ -12,7 +12,7 @@ const ISLAND_SPAWN_MARGIN: f32 = 200.0;
 const MIN_ISLAND_SPAWN_DISTANCE: f32 = 140.0;
 const ISLAND_POSITION_ATTEMPTS: usize = 40;
 const ROUTE_HISTORY_WINDOW_TICKS: usize = 10;
-const SCUTTLE_THRESHOLD_MULTIPLIER: f32 = 0.50;
+const SCUTTLE_THRESHOLD_MULTIPLIER: f32 = 0.35;
 const BIRTH_THRESHOLD_MULTIPLIER: f32 = 5.0;
 const LIFECYCLE_CHECK_INTERVAL_TICKS: u64 = 30;
 const MUTATION_STRENGTH: f32 = 0.05;
@@ -166,7 +166,7 @@ impl World {
         self.update_island_economy(dt);
         self.move_ships(dt);
         self.process_docked_ships();
-        self.apply_ship_maintenance();
+        self.apply_ship_maintenance(dt);
         self.route_history_cursor = (self.route_history_cursor + 1) % ROUTE_HISTORY_WINDOW_TICKS;
         if self.tick.is_multiple_of(LIFECYCLE_CHECK_INTERVAL_TICKS) {
             self.evolve_fleet();
@@ -196,19 +196,20 @@ impl World {
 
     fn move_ships(&mut self, dt: f32) {
         for ship in &mut self.ships {
-            let _ = ship.update(dt);
+            let _ = ship.update(dt, self.planning_tuning.cost_per_mile_factor);
         }
     }
 
-    fn apply_ship_maintenance(&mut self) {
+    fn apply_ship_maintenance(&mut self, dt: f32) {
         for ship in &mut self.ships {
-            ship.apply_maintenance();
+            ship.apply_maintenance(dt);
         }
     }
 
     fn process_docked_ships(&mut self) {
         let mut ships_by_island = vec![Vec::new(); self.islands.len()];
         let mut sold_this_tick = vec![false; self.ships.len()];
+        let mut bankrupt_this_tick = vec![false; self.ships.len()];
         for (ship_idx, ship) in self.ships.iter().enumerate() {
             if let Some(island_id) = ship.docked_island() {
                 if island_id < self.islands.len() {
@@ -234,6 +235,9 @@ impl World {
                 island.mark_seen(self.tick);
 
                 for &ship_idx in ship_indices {
+                    if bankrupt_this_tick[ship_idx] {
+                        continue;
+                    }
                     let ship_tuning = self.ships[ship_idx].effective_tuning(&self.planning_tuning);
                     self.ships[ship_idx].begin_dock_tick(&ship_tuning);
                     let load_context = LoadPlanningContext {
@@ -262,11 +266,17 @@ impl World {
                         // If cargo remains after a partial sale, allow immediate redeparture.
                         sold_this_tick[ship_idx] = self.ships[ship_idx].has_no_cargo();
                     }
+                    if self.ships[ship_idx].is_bankrupt() {
+                        bankrupt_this_tick[ship_idx] = true;
+                    }
                 }
 
                 island.recompute_local_prices(self.tick);
 
                 for &ship_idx in ship_indices {
+                    if bankrupt_this_tick[ship_idx] {
+                        continue;
+                    }
                     let exclude = self.ships[ship_idx].just_sold_resource();
                     let ship_tuning = self.ships[ship_idx].effective_tuning(&self.planning_tuning);
                     let load_context = LoadPlanningContext {
@@ -293,7 +303,7 @@ impl World {
 
                 let mut island_ledger_buffer = self.islands[island_id].ledger.clone();
                 for &ship_idx in ship_indices {
-                    if sold_this_tick[ship_idx] {
+                    if sold_this_tick[ship_idx] || bankrupt_this_tick[ship_idx] {
                         continue;
                     }
                     self.ships[ship_idx]
@@ -320,7 +330,7 @@ impl World {
             let outbound_recent_departures = &mut outbound_recent_departures_by_island[island_id];
 
             for &ship_idx in ship_indices {
-                if sold_this_tick[ship_idx] {
+                if sold_this_tick[ship_idx] || bankrupt_this_tick[ship_idx] {
                     continue;
                 }
                 let ship_tuning = self.ships[ship_idx].effective_tuning(&self.planning_tuning);
@@ -359,6 +369,15 @@ impl World {
         for (ship_idx, target_island_id) in departure_orders {
             let target_pos = self.islands[target_island_id].pos;
             self.ships[ship_idx].set_target(target_island_id, target_pos);
+        }
+
+        if bankrupt_this_tick.iter().any(|is_bankrupt| *is_bankrupt) {
+            let old_ships = std::mem::take(&mut self.ships);
+            self.ships = old_ships
+                .into_iter()
+                .enumerate()
+                .filter_map(|(idx, ship)| (!bankrupt_this_tick[idx]).then_some(ship))
+                .collect();
         }
     }
 
@@ -415,7 +434,7 @@ impl World {
         let panel_x = 14.0;
         let panel_y = 14.0;
         let panel_w = 260.0;
-        let panel_h = 292.0;
+        let panel_h = 310.0;
 
         let mut total_inventory = [0.0_f32; RESOURCE_COUNT];
         let mut total_population = 0.0_f32;
@@ -513,6 +532,10 @@ impl World {
             "Carry cost: {:.4}",
             self.planning_tuning.capital_carry_cost_per_time
         );
+        let mile_cost_text = format!(
+            "Mile cost x: {:.2}",
+            self.planning_tuning.cost_per_mile_factor
+        );
         let ship_count_text = format!("Ships: {}", self.ships.len());
         let archetype_text = format!(
             "R/F/C: {}/{}/{}",
@@ -538,14 +561,21 @@ impl World {
         draw_text(
             &ship_count_text,
             panel_x + 10.0,
-            panel_y + 262.0,
+            panel_y + 280.0,
             18.0,
             WHITE,
         );
         draw_text(
             &archetype_text,
             panel_x + 10.0,
-            panel_y + 280.0,
+            panel_y + 298.0,
+            18.0,
+            WHITE,
+        );
+        draw_text(
+            &mile_cost_text,
+            panel_x + 10.0,
+            panel_y + 262.0,
             18.0,
             WHITE,
         );
@@ -612,7 +642,7 @@ impl World {
             ship.fuel_burn_rate(),
             ship.maintenance_rate()
         );
-        let cash_text = format!("Cash: {:.1}", ship.cash.max(0.0));
+        let cash_text = format!("Cash: {:.1}", ship.cash);
         let controls_text = "[ / ]: Prev / Next ship";
 
         draw_text(&ship_id_text, inspect_x + 10.0, inspect_y + 48.0, 18.0, WHITE);

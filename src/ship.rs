@@ -21,7 +21,7 @@ const DEFAULT_CAPITAL_CARRY_COST_PER_TIME: f32 = 0.0020;
 const HIGH_PRICE_RISK_WEIGHT: f32 = 0.65;
 const BASE_CARGO_VOLUME_CAPACITY: f32 = 22.0;
 const BASE_FUEL_BURN_RATE: f32 = 1.0;
-const BASE_MAINTENANCE_RATE: f32 = 0.01;
+const BASE_MAINTENANCE_RATE: f32 = 0.002;
 const RUNNER_SPEED_MULTIPLIER: f32 = 1.50;
 const COASTER_SPEED_MULTIPLIER: f32 = 1.00;
 const FREIGHTER_SPEED_MULTIPLIER: f32 = 0.75;
@@ -45,6 +45,7 @@ pub struct PlanningTuning {
     pub learning_decay: f32,
     pub learning_weight: f32,
     pub transport_cost_per_distance: f32,
+    pub cost_per_mile_factor: f32,
     pub capital_carry_cost_per_time: f32,
     pub island_neglect_bonus_per_tick: f32,
     pub island_neglect_bonus_cap: f32,
@@ -76,6 +77,7 @@ impl Default for PlanningTuning {
             learning_decay: 0.98,
             learning_weight: 12.0,
             transport_cost_per_distance: 0.0006,
+            cost_per_mile_factor: 1.0,
             capital_carry_cost_per_time: DEFAULT_CAPITAL_CARRY_COST_PER_TIME,
             island_neglect_bonus_per_tick: 0.006,
             island_neglect_bonus_cap: 18.0,
@@ -83,9 +85,10 @@ impl Default for PlanningTuning {
     }
 }
 
-const MAX_REALIZED_FREIGHT_SHARE: f32 = 0.50;
 const MIN_SHIP_SPEED: f32 = 120.0;
 const MAX_SHIP_SPEED: f32 = 600.0;
+const TRAVEL_CASH_BURN_PER_DISTANCE: f32 = 0.00022;
+const BANKRUPTCY_CASH_FLOOR: f32 = -20.0;
 const MIN_HULL_SIZE: f32 = 0.75;
 const MAX_HULL_SIZE: f32 = 1.60;
 const MIN_EFFICIENCY_RATING: f32 = 0.80;
@@ -265,13 +268,21 @@ impl Ship {
             (tuned.learning_weight * self.strategy_genes.learning_weight_scale).max(0.0);
         tuned.transport_cost_per_distance =
             (tuned.transport_cost_per_distance * self.strategy_genes.transport_cost_scale).max(0.0);
+        tuned.cost_per_mile_factor = tuned.cost_per_mile_factor.clamp(0.2, 5.0);
         tuned.capital_carry_cost_per_time = tuned.capital_carry_cost_per_time.max(0.0);
         tuned
     }
 
     pub fn spawn_daughter(&mut self, mutation_strength: f32, rng: &mut impl Rng) -> Option<Ship> {
-        let docked_island_id = self.docked_island()?;
         let num_islands = self.ledger.len();
+        if num_islands == 0 {
+            return None;
+        }
+        let spawn_island_id = self
+            .docked_island()
+            .or(self.target_island_id)
+            .unwrap_or(0)
+            .min(num_islands - 1);
 
         let speed_mutation = 1.0 + rng.gen_range(-mutation_strength..mutation_strength);
         let daughter_base_speed =
@@ -280,10 +291,15 @@ impl Ship {
         let endowment = self.cash * 0.5;
         self.cash -= endowment;
 
-        let mut daughter = Ship::new(self.pos, daughter_base_speed, num_islands, docked_island_id);
+        let mut daughter = Ship::new(self.pos, daughter_base_speed, num_islands, spawn_island_id);
         daughter.cash = endowment;
         daughter.ledger = self.ledger.clone();
         daughter.route_memory = self.route_memory.clone();
+        if self.docked_island().is_none() {
+            if let Some(target_id) = self.target_island_id {
+                daughter.set_target(target_id.min(num_islands - 1), self.target);
+            }
+        }
         daughter.hull_size = mutate_gene_gaussian(
             self.hull_size,
             mutation_strength,
@@ -365,8 +381,12 @@ impl Ship {
         net_worth
     }
 
-    pub fn apply_maintenance(&mut self) {
-        self.cash = (self.cash - self.maintenance_rate).max(0.0);
+    pub fn apply_maintenance(&mut self, dt: f32) {
+        self.cash -= self.maintenance_rate * dt.max(0.0);
+    }
+
+    pub fn is_bankrupt(&self) -> bool {
+        self.cash < BANKRUPTCY_CASH_FLOOR
     }
 
     pub fn archetype(&self) -> ShipArchetype {
@@ -517,9 +537,9 @@ impl Ship {
         let raw_freight_cost = self.cargo_distance_accrued
             * sold_volume
             * tuning.transport_cost_per_distance
+            * tuning.cost_per_mile_factor
             * self.fuel_burn_rate;
-        let realized_freight_cost = raw_freight_cost.min(gross_revenue * MAX_REALIZED_FREIGHT_SHARE);
-        let net_revenue = gross_revenue - realized_freight_cost;
+        let net_revenue = gross_revenue - raw_freight_cost;
         self.cash += net_revenue;
 
         let book_price = self.purchase_price_by_resource[resource_idx];
@@ -585,10 +605,8 @@ impl Ship {
                 continue;
             }
 
-            let released_volume = source_amount * source_resource.volume_per_unit();
-            let available_volume_after_release = self.remaining_cargo_volume() + released_volume;
             let cargo_value_budget = source_amount * source_bid_price;
-            if cargo_value_budget <= 0.0 || available_volume_after_release <= 0.0 {
+            if cargo_value_budget <= 0.0 {
                 continue;
             }
 
@@ -608,8 +626,16 @@ impl Ship {
                 }
 
                 let max_units_by_value = cargo_value_budget / ask_price;
-                let max_units_by_volume =
-                    available_volume_after_release / resource.volume_per_unit().max(0.01);
+                let source_volume_per_unit = source_resource.volume_per_unit().max(0.01);
+                let target_volume_per_unit = resource.volume_per_unit().max(0.01);
+                let source_units_per_target_unit = ask_price / source_bid_price;
+                let net_volume_per_target_unit =
+                    target_volume_per_unit - source_units_per_target_unit * source_volume_per_unit;
+                let max_units_by_volume = if net_volume_per_target_unit > 0.0 {
+                    self.remaining_cargo_volume() / net_volume_per_target_unit
+                } else {
+                    f32::INFINITY
+                };
                 let amount_for_utility = max_units_by_value
                     .min(max_units_by_volume)
                     .min(available)
@@ -646,7 +672,7 @@ impl Ship {
             }
         }
 
-        let Some((source_resource, resource, target_id, ask_price, acquired_amount, source_bid_price)) =
+        let Some((source_resource, resource, target_id, ask_price, mut acquired_amount, source_bid_price)) =
             best_choice
         else {
             return self.last_dock_action;
@@ -658,11 +684,38 @@ impl Ship {
 
         let source_idx = source_resource.idx();
         let target_idx = resource.idx();
-        let value_spent = acquired_amount * ask_price;
-        let source_amount_sold = (value_spent / source_bid_price)
-            .min(self.cargo[source_idx].max(0.0))
+        let source_volume_per_unit = source_resource.volume_per_unit().max(0.01);
+        let target_volume_per_unit = resource.volume_per_unit().max(0.01);
+        let max_source_sell = self.cargo[source_idx]
+            .max(0.0)
+            .min(self.max_units_for_trade_action(source_resource));
+        acquired_amount = acquired_amount
+            .min(island.inventory[target_idx].max(0.0))
+            .min(self.max_units_for_trade_action(resource))
+            .min(max_source_sell * source_bid_price / ask_price);
+
+        let source_units_per_target_unit = ask_price / source_bid_price;
+        let net_volume_per_target_unit =
+            target_volume_per_unit - source_units_per_target_unit * source_volume_per_unit;
+        if net_volume_per_target_unit > 0.0 {
+            acquired_amount = acquired_amount
+                .min(self.remaining_cargo_volume() / net_volume_per_target_unit);
+        }
+        if acquired_amount <= 0.0 {
+            return self.last_dock_action;
+        }
+
+        let source_amount_sold = (acquired_amount * ask_price / source_bid_price)
+            .min(max_source_sell)
             .max(0.0);
         if source_amount_sold <= 0.0 {
+            return self.last_dock_action;
+        }
+
+        let projected_post_volume = self.total_cargo_volume()
+            - source_amount_sold * source_volume_per_unit
+            + acquired_amount * target_volume_per_unit;
+        if projected_post_volume > self.max_cargo_volume + 0.0001 {
             return self.last_dock_action;
         }
 
@@ -1182,8 +1235,10 @@ impl Ship {
         confidence *= price_risk_factor;
 
         let expected_profit = real_expected_profit * confidence;
-        let fuel_cost =
-            distance * context.tuning.transport_cost_per_distance * self.fuel_burn_rate;
+        let fuel_cost = distance
+            * context.tuning.transport_cost_per_distance
+            * context.tuning.cost_per_mile_factor
+            * self.fuel_burn_rate;
         let maintenance_trip_cost = transit_time * self.maintenance_rate;
         let capital_carry_cost = buy_price
             * effective_lot_size
@@ -1226,7 +1281,7 @@ impl Ship {
     }
 
     /// Move toward target. Returns the island id when docking this tick.
-    pub fn update(&mut self, dt: f32) -> Option<usize> {
+    pub fn update(&mut self, dt: f32, cost_per_mile_factor: f32) -> Option<usize> {
         let to_target = self.target - self.pos;
         let dist = to_target.length();
         if dist < 1.0 {
@@ -1234,6 +1289,11 @@ impl Ship {
             return self.docked_at;
         }
         let step = self.speed * dt;
+        let travel_distance = step.min(dist);
+        self.cash -= travel_distance
+            * self.fuel_burn_rate
+            * TRAVEL_CASH_BURN_PER_DISTANCE
+            * cost_per_mile_factor.clamp(0.2, 5.0);
         if step >= dist {
             if !self.has_no_cargo() {
                 self.cargo_distance_accrued += dist;
