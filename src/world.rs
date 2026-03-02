@@ -4,7 +4,7 @@ use rayon::prelude::*;
 
 use crate::island::{Island, Resource, RESOURCE_COUNT};
 use crate::ship::{
-    DockAction, LoadPlanningContext, PlanningTuning, Ship, ShipArchetype, STARTING_CASH,
+    LoadPlanningContext, PlanningTuning, Ship, ShipArchetype, STARTING_CASH,
 };
 
 pub const WORLD_SIZE: f32 = 5000.0;
@@ -16,6 +16,7 @@ const SCUTTLE_THRESHOLD_MULTIPLIER: f32 = 0.35;
 const BIRTH_THRESHOLD_MULTIPLIER: f32 = 5.0;
 const LIFECYCLE_CHECK_INTERVAL_TICKS: u64 = 30;
 const MUTATION_STRENGTH: f32 = 0.05;
+const MAX_DOCK_SETTLEMENT_STEPS: usize = 6;
 
 pub struct World {
     pub islands: Vec<Island>,
@@ -247,21 +248,14 @@ impl World {
                         tuning: &ship_tuning,
                         outbound_recent_departures,
                     };
-                    let barter_action = self.ships[ship_idx].trade_barter_if_carrying(
+                    let settled_any = self.ships[ship_idx].trade_settle_until_stuck(
                         island_id,
                         island,
                         &load_context,
+                        &ship_tuning,
+                        MAX_DOCK_SETTLEMENT_STEPS,
                     );
-                    let unload_action = if barter_action == DockAction::Bartered {
-                        barter_action
-                    } else {
-                        self.ships[ship_idx].trade_unload_if_carrying(
-                            island_id,
-                            island,
-                            &ship_tuning,
-                        )
-                    };
-                    if unload_action == DockAction::Sold {
+                    if settled_any {
                         // Only hold ships that fully unloaded and are now empty.
                         // If cargo remains after a partial sale, allow immediate redeparture.
                         sold_this_tick[ship_idx] = self.ships[ship_idx].has_no_cargo();
@@ -432,7 +426,9 @@ impl World {
         if !self.ships.is_empty() {
             let selected_idx = self.selected_ship_index.min(self.ships.len() - 1);
             let ship = &self.ships[selected_idx];
-            draw_circle_lines(ship.pos.x, ship.pos.y, 12.0, 2.5, RED);
+            let ring_radius = 14.0 * world_units_per_pixel;
+            let ring_thickness = 3.0 * world_units_per_pixel;
+            draw_circle_lines(ship.pos.x, ship.pos.y, ring_radius, ring_thickness, RED);
         }
     }
 
@@ -563,7 +559,7 @@ impl World {
         );
 
         let inspect_w = 320.0;
-        let inspect_h = 208.0;
+        let inspect_h = 226.0;
         let inspect_x = (screen_width() - inspect_w - 14.0).max(14.0);
         let inspect_y = 14.0;
         draw_rectangle(
@@ -625,6 +621,14 @@ impl World {
             ship.maintenance_rate()
         );
         let cash_text = format!("Cash: {:.1}", ship.cash);
+        let cargo_mix_text = format!(
+            "Cargo G/T/I/To/S: {:.1}/{:.1}/{:.1}/{:.1}/{:.1}",
+            ship.cargo_amount(Resource::Grain),
+            ship.cargo_amount(Resource::Timber),
+            ship.cargo_amount(Resource::Iron),
+            ship.cargo_amount(Resource::Tools),
+            ship.cargo_amount(Resource::Spices),
+        );
         let controls_text = "[ / ]: Prev / Next ship";
 
         draw_text(&ship_id_text, inspect_x + 10.0, inspect_y + 48.0, 18.0, WHITE);
@@ -634,8 +638,15 @@ impl World {
         draw_text(&cargo_text, inspect_x + 10.0, inspect_y + 120.0, 18.0, WHITE);
         draw_text(&upkeep_text, inspect_x + 10.0, inspect_y + 138.0, 18.0, WHITE);
         draw_text(&cash_text, inspect_x + 10.0, inspect_y + 156.0, 18.0, WHITE);
-        draw_text(&dominant_cargo_text, inspect_x + 10.0, inspect_y + 174.0, 18.0, WHITE);
-        draw_text(controls_text, inspect_x + 10.0, inspect_y + 196.0, 16.0, LIGHTGRAY);
+        draw_text(&cargo_mix_text, inspect_x + 10.0, inspect_y + 174.0, 17.0, WHITE);
+        draw_text(
+            &dominant_cargo_text,
+            inspect_x + 10.0,
+            inspect_y + 192.0,
+            17.0,
+            WHITE,
+        );
+        draw_text(controls_text, inspect_x + 10.0, inspect_y + 214.0, 16.0, LIGHTGRAY);
 
         let island_hud_y = inspect_y + inspect_h + 12.0;
         let island_hud_h = 208.0;

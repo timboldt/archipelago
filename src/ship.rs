@@ -433,6 +433,10 @@ impl Ship {
         Some((resource, amount * unit_price))
     }
 
+    pub fn cargo_amount(&self, resource: Resource) -> f32 {
+        self.cargo[resource.idx()].max(0.0)
+    }
+
     pub fn has_no_cargo(&self) -> bool {
         self.cargo.iter().all(|amount| *amount <= 0.0)
     }
@@ -453,16 +457,40 @@ impl Ship {
         TRADE_ACTION_VOLUME / resource.volume_per_unit().max(0.01)
     }
 
-    fn dominant_cargo_resource(&self) -> Option<Resource> {
+    fn best_unload_resource(&self, island: &Island) -> Option<Resource> {
         let mut best_resource = None;
-        let mut best_amount = 0.0;
+        let mut best_sale_value = 0.0;
+
         for resource in Resource::iter() {
-            let amount = self.cargo[resource.idx()].max(0.0);
-            if amount > best_amount {
-                best_amount = amount;
+            let idx = resource.idx();
+            let carrying_amount = self.cargo[idx].max(0.0);
+            if carrying_amount <= 0.0 {
+                continue;
+            }
+
+            let bid_price = island.bid_price(resource);
+            if !bid_price.is_finite() || bid_price <= 0.0 {
+                continue;
+            }
+
+            let requested_amount = carrying_amount.min(self.max_units_for_trade_action(resource));
+            if requested_amount <= 0.0 {
+                continue;
+            }
+
+            let affordable = (island.cash / bid_price).max(0.0);
+            let tradable_amount = requested_amount.min(affordable);
+            if tradable_amount <= 0.0 {
+                continue;
+            }
+
+            let sale_value = tradable_amount * bid_price;
+            if sale_value > best_sale_value {
+                best_sale_value = sale_value;
                 best_resource = Some(resource);
             }
         }
+
         best_resource
     }
 
@@ -514,7 +542,7 @@ impl Ship {
             return self.last_dock_action;
         }
 
-        let Some(resource) = self.dominant_cargo_resource() else {
+        let Some(resource) = self.best_unload_resource(island) else {
             return self.last_dock_action;
         };
         let resource_idx = resource.idx();
@@ -561,6 +589,52 @@ impl Ship {
         self.just_sold_resource = Some(resource);
         self.last_dock_action = DockAction::Sold;
         self.last_dock_action
+    }
+
+    pub fn trade_settle_until_stuck(
+        &mut self,
+        current_island_id: usize,
+        island: &mut Island,
+        context: &LoadPlanningContext<'_>,
+        tuning: &PlanningTuning,
+        max_steps: usize,
+    ) -> bool {
+        if self.last_dock_action != DockAction::None {
+            return false;
+        }
+
+        let mut settled_any = false;
+        for _ in 0..max_steps.max(1) {
+            if self.has_no_cargo() {
+                break;
+            }
+
+            self.last_dock_action = DockAction::None;
+            let barter_action = self.trade_barter_if_carrying(current_island_id, island, context);
+            let action = if barter_action == DockAction::Bartered {
+                barter_action
+            } else {
+                self.trade_unload_if_carrying(current_island_id, island, tuning)
+            };
+
+            match action {
+                DockAction::Sold | DockAction::Bartered => {
+                    settled_any = true;
+                }
+                DockAction::None | DockAction::Bought => break,
+            }
+
+            if self.is_bankrupt() {
+                break;
+            }
+        }
+
+        self.last_dock_action = if settled_any {
+            DockAction::Sold
+        } else {
+            DockAction::None
+        };
+        settled_any
     }
 
     pub fn trade_barter_if_carrying(
