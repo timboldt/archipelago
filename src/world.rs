@@ -6,10 +6,12 @@
 use ::rand::Rng;
 use macroquad::prelude::*;
 use rayon::prelude::*;
+use std::fs;
 use std::time::Instant;
 
-use crate::island::Island;
-use crate::ship::{PlanningTuning, Ship, STARTING_CASH};
+use crate::island::{Island, Resource};
+use crate::ship::{LoadPlanningContext, PlanningTuning, Ship, STARTING_CASH};
+use strum::IntoEnumIterator;
 
 mod docking;
 mod hud;
@@ -194,6 +196,149 @@ impl World {
                 self.select_next_ship();
             }
         }
+        if is_key_pressed(KeyCode::F9) {
+            if let Err(err) = self.save_debug_snapshot() {
+                eprintln!("failed to save debug snapshot: {err}");
+            }
+        }
+    }
+
+    fn resource_label(resource: Resource) -> &'static str {
+        match resource {
+            Resource::Grain => "Grain",
+            Resource::Timber => "Timber",
+            Resource::Iron => "Iron",
+            Resource::Tools => "Tools",
+            Resource::Spices => "Spices",
+        }
+    }
+
+    fn save_debug_snapshot(&self) -> std::io::Result<()> {
+        let active_ships = self.active_ship_count();
+        let spread = self.planning_tuning.market_spread;
+        let mut out = String::new();
+        out.push_str(&format!(
+            "tick={}\nislands={}\nactive_ships={}\n\n",
+            self.tick,
+            self.islands.len(),
+            active_ships
+        ));
+
+        if let Some(ship) = self
+            .ships
+            .get(self.selected_ship_index)
+            .and_then(|slot| slot.as_ref())
+        {
+            out.push_str("selected_ship\n");
+            out.push_str(&format!(
+                "  slot={}\n  cash={:.2}\n  cargo_volume={:.2}/{:.2}\n  docked_at={:?}\n  target={:?}\n\n",
+                self.selected_ship_index,
+                ship.cash,
+                ship.cargo_volume_used(),
+                ship.max_cargo_volume(),
+                ship.docked_island(),
+                ship.target_island()
+            ));
+        }
+
+        if !self.islands.is_empty() {
+            let island_idx = self.selected_island_index.min(self.islands.len() - 1);
+            let island = &self.islands[island_idx];
+            out.push_str("selected_island\n");
+            out.push_str(&format!(
+                "  id={}\n  pop={:.2}\n  cash={:.2}\n  infra={:.2}\n",
+                island.id, island.population, island.cash, island.infrastructure_level
+            ));
+            for resource in Resource::iter() {
+                let idx = resource.idx();
+                out.push_str(&format!(
+                    "  {} inv={:.2} price={:.2}\n",
+                    Self::resource_label(resource),
+                    island.inventory[idx],
+                    island.local_prices[idx]
+                ));
+            }
+            out.push('\n');
+        }
+
+        out.push_str("docked_empty_ships_with_local_buy_capacity\n");
+        let island_positions: Vec<Vec2> = self.islands.iter().map(|island| island.pos).collect();
+        let base_tuning = self.environmental_tuning();
+        for (ship_slot, ship) in self.ships.iter().enumerate().filter_map(|(i, slot)| {
+            slot.as_ref()
+                .filter(|ship| ship.docked_island().is_some() && ship.has_no_cargo())
+                .map(|ship| (i, ship))
+        }) {
+            let Some(island_id) = ship.docked_island() else {
+                continue;
+            };
+            let Some(island) = self.islands.get(island_id) else {
+                continue;
+            };
+            let free_volume = (ship.max_cargo_volume() - ship.cargo_volume_used()).max(0.0);
+            if free_volume <= 0.0 || ship.cash <= 0.0 {
+                continue;
+            }
+            let ship_tuning = ship.effective_tuning(&base_tuning);
+            let outbound_recent_departures = self
+                .recent_route_departures
+                .get(island_id)
+                .map(|row| row.as_slice())
+                .unwrap_or(&[]);
+            let load_context = LoadPlanningContext {
+                current_island_id: island_id,
+                island_positions: &island_positions,
+                current_tick: self.tick,
+                tuning: &ship_tuning,
+                outbound_recent_departures,
+            };
+            let diagnostics = ship.debug_load_diagnostics(island, None, &load_context);
+            out.push_str(&format!(
+                "  ship_slot={} island={} ship_cash={:.2} free_volume={:.2}\n",
+                ship_slot, island_id, ship.cash, free_volume
+            ));
+            out.push_str(&format!(
+                "    load_scan blocked={} idle_ticks={} utility_floor={:.3} remaining_volume={:.2} scanned={} feasible={} best_utility={:.3} best_resource={} best_target={:?}\n",
+                diagnostics.blocked_by_last_action,
+                diagnostics.dock_idle_ticks,
+                diagnostics.utility_floor,
+                diagnostics.remaining_volume,
+                diagnostics.scanned_pairs,
+                diagnostics.feasible_pairs,
+                diagnostics.best_utility,
+                diagnostics
+                    .best_resource
+                    .map(Self::resource_label)
+                    .unwrap_or("None"),
+                diagnostics.best_target
+            ));
+            for resource in Resource::iter() {
+                let idx = resource.idx();
+                let ask = island.ask_price(resource, spread);
+                if ask <= 0.0 || !ask.is_finite() {
+                    continue;
+                }
+                let available = island.inventory[idx].max(0.0);
+                let affordable = (ship.cash / ask).max(0.0);
+                let max_by_volume = free_volume / resource.volume_per_unit().max(0.01);
+                let buyable = available.min(affordable).min(max_by_volume);
+                if buyable > 0.0 {
+                    out.push_str(&format!(
+                        "    {} buyable={:.2} (avail={:.2}, affordable={:.2}, ask={:.2})\n",
+                        Self::resource_label(resource),
+                        buyable,
+                        available,
+                        affordable,
+                        ask
+                    ));
+                }
+            }
+        }
+
+        let path = format!("debug_snapshot_tick_{}.txt", self.tick);
+        fs::write(&path, out)?;
+        eprintln!("saved debug snapshot to {path}");
+        Ok(())
     }
 
     /// Computes effective tuning after applying crowding-dependent friction.

@@ -165,6 +165,13 @@ pub(super) fn draw_ui(world: &World) {
         17.0,
         WHITE,
     );
+    draw_text(
+        "F9: Save debug snapshot",
+        panel_x + 10.0,
+        panel_y + 398.0,
+        16.0,
+        LIGHTGRAY,
+    );
 
     let inspect_w = INSPECT_W;
     let inspect_h = SHIP_INSPECT_H;

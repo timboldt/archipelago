@@ -109,7 +109,10 @@ impl World {
             if sold_and_empty[idx] || bankrupt[idx] {
                 continue;
             }
-            if !ship.has_no_cargo() && !ship.cargo_changed_this_dock() {
+            let has_outbound_target = ship
+                .target_island()
+                .is_some_and(|target_island_id| target_island_id != island_id);
+            if !ship.has_no_cargo() && !ship.cargo_changed_this_dock() && has_outbound_target {
                 continue;
             }
 

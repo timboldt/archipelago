@@ -114,11 +114,15 @@ cargo +nightly fmt
 - **Trader phenotypes:** Mutated strategy genes include confidence-decay scaling and risk tolerance.
 - **Derived ship costs:** Trade planning and settlement derive `cost_per_distance` and `cost_per_time` from ship traits (speed/distance-cost rate and maintenance/hull profile), rather than independent tuning dials.
 - **Dock cadence:** Ships that sell on a tick stay docked for at least that tick (no immediate departure while empty), then can reload and depart on a following tick.
+- **Dock risk ramp:** Empty ships become gradually more willing to take slightly negative-utility loads the longer they wait docked, helping break deadlock states.
+- **Least-worst loading:** Empty ships now load the best finite lane even when utility is negative, preventing dock deadlocks where all options are unattractive.
+- **Forced post-load departure:** Once a ship loads, it keeps its planned outbound target and departs instead of waiting docked for a positive re-evaluation.
 - **Dock performance path:** Dock settlement iterations are capped lower, loaded ships use a preselected post-load destination fast-path when viable, and loaded ships skip full destination rescans on ticks where dock actions did not change cargo.
 - **Tuning controls:** `main.rs` exposes environmental constants (`global_friction_mult`, `info_decay_rate`, `market_spread`) and applies them via `World::set_planning_tuning(...)`.
 - **Ship selection controls:** Press `[` and `]` during runtime to cycle the selected ship in the top-right inspector panel.
 - **Island selection controls:** Press `{` and `}` (Shift + `[` / Shift + `]`) to cycle the selected island in the island inspector panel.
 - **Time-scale controls:** Press `-` / `=` to decrease/increase simulation speed, and `\` to reset to `1.0x`.
+- **Debug snapshot control:** Press `F9` to write a runtime snapshot (`debug_snapshot_tick_<tick>.txt`) with selected ship/island details, docked-empty ship buy-capacity diagnostics, and per-ship load-utility scan stats (`scanned/feasible/best utility`).
 
 ## Tech Stack (Current)
 
