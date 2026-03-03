@@ -7,18 +7,30 @@ mod world;
 use ship::PlanningTuning;
 use world::{World, WORLD_SIZE};
 
+const TIME_SCALE_MIN: f32 = 0.25;
+const TIME_SCALE_MAX: f32 = 6.0;
+const TIME_SCALE_STEP: f32 = 0.25;
+const TIME_SCALE_DEFAULT: f32 = 1.0;
+
+fn handle_time_scale_input(time_scale: &mut f32) {
+    if is_key_pressed(KeyCode::Minus) {
+        *time_scale = (*time_scale - TIME_SCALE_STEP).clamp(TIME_SCALE_MIN, TIME_SCALE_MAX);
+    }
+    if is_key_pressed(KeyCode::Equal) {
+        *time_scale = (*time_scale + TIME_SCALE_STEP).clamp(TIME_SCALE_MIN, TIME_SCALE_MAX);
+    }
+}
+
 #[macroquad::main("Archipelago")]
 async fn main() {
+    // Number of islands and ships in the simulation.
     const NUM_ISLANDS: usize = 50;
     const NUM_SHIPS: usize = 500;
 
+    // Overall tuning parameters for ship planning.
     const GLOBAL_FRICTION_MULT: f32 = 1.0;
     const INFO_DECAY_RATE: f32 = 0.003;
     const MARKET_SPREAD: f32 = 0.10;
-    const TIME_SCALE_MIN: f32 = 0.25;
-    const TIME_SCALE_MAX: f32 = 6.0;
-    const TIME_SCALE_STEP: f32 = 0.25;
-    const TIME_SCALE_DEFAULT: f32 = 1.0;
 
     let planning_tuning = PlanningTuning {
         global_friction_mult: GLOBAL_FRICTION_MULT,
@@ -32,15 +44,7 @@ async fn main() {
 
     loop {
         world.handle_input();
-        if is_key_pressed(KeyCode::Minus) {
-            time_scale = (time_scale - TIME_SCALE_STEP).clamp(TIME_SCALE_MIN, TIME_SCALE_MAX);
-        }
-        if is_key_pressed(KeyCode::Equal) {
-            time_scale = (time_scale + TIME_SCALE_STEP).clamp(TIME_SCALE_MIN, TIME_SCALE_MAX);
-        }
-        if is_key_pressed(KeyCode::Backslash) {
-            time_scale = TIME_SCALE_DEFAULT;
-        }
+        handle_time_scale_input(&mut time_scale);
 
         // Camera maps simulation space (WORLD_SIZE x WORLD_SIZE) to the screen,
         // with inverted world Y so world-space icons render upright.
