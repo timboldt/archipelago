@@ -1,10 +1,13 @@
 use ::rand::Rng;
-use macroquad::prelude::*;
+use macroquad::prelude::Vec2;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
+/// Number of fixed resources in the simulation economy.
 pub const RESOURCE_COUNT: usize = 5;
+/// Base (pre-scarcity) unit value per resource.
 pub const BASE_COSTS: [f32; RESOURCE_COUNT] = [20.0, 30.0, 45.0, 120.0, 180.0];
+/// Nominal per-resource storage baseline used during island initialization.
 pub const INVENTORY_CARRYING_CAPACITY: f32 = 180.0;
 const INITIAL_POPULATION_MIN: f32 = 45.0;
 const INITIAL_POPULATION_MAX: f32 = 140.0;
@@ -48,9 +51,6 @@ const CAPITAL_INVESTMENT_THRESHOLD: f32 = 1600.0;
 const CAPITAL_INVESTMENT_RATE: f32 = 0.06;
 const INFRASTRUCTURE_INVESTMENT_EFFICIENCY: f32 = 0.00032;
 const MAX_INFRASTRUCTURE_LEVEL: f32 = 3.5;
-const POPULATION_DISPLAY_SCALE: f32 = 150.0;
-const CASH_DISPLAY_SCALE: f32 = 800.0;
-const INFRASTRUCTURE_DISPLAY_MAX: f32 = 2.0;
 
 fn bid_multiplier(market_spread: f32) -> f32 {
     (1.0 - market_spread.clamp(0.0, 1.8) * 0.5).max(0.05)
@@ -62,6 +62,7 @@ fn ask_multiplier(market_spread: f32) -> f32 {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, EnumIter)]
 #[repr(usize)]
+/// Resource kinds traded and consumed across islands and ships.
 pub enum Resource {
     Grain,
     Timber,
@@ -71,10 +72,12 @@ pub enum Resource {
 }
 
 impl Resource {
+    /// Returns the fixed array index for this resource.
     pub fn idx(self) -> usize {
         self as usize
     }
 
+    /// Returns cargo-space volume used by one unit of this resource.
     pub fn volume_per_unit(self) -> f32 {
         match self {
             Resource::Grain => 1.0,
@@ -86,20 +89,30 @@ impl Resource {
     }
 }
 
+/// Fixed-size inventory vector indexed by [`Resource::idx`].
 pub type Inventory = [f32; RESOURCE_COUNT];
 
 #[derive(Clone, Copy, Debug)]
+/// Snapshot of one island market for ship/island local ledgers.
 pub struct PriceEntry {
+    /// Observed local prices by resource.
     pub prices: [f32; RESOURCE_COUNT],
+    /// Observed local inventories by resource.
     pub inventories: [f32; RESOURCE_COUNT],
+    /// Observed island cash/liquidity.
     pub cash: f32,
+    /// Observed island infrastructure level.
     pub infrastructure_level: f32,
+    /// World tick when the source island last refreshed this entry.
     pub tick_updated: u64,
+    /// World tick when this ledger owner last saw the source island directly.
     pub last_seen_tick: u64,
 }
 
+/// Fixed-size per-island market cache indexed by island id.
 pub type PriceLedger = Vec<PriceEntry>;
 
+/// Core island economy state and market operations.
 pub struct Island {
     #[allow(dead_code)]
     pub id: usize,
@@ -119,6 +132,9 @@ pub struct Island {
 }
 
 impl Island {
+    /// Creates a new island with randomized capacities, production, and initial market state.
+    ///
+    /// `num_islands` defines the fixed ledger length so entries can be indexed by island id.
     pub fn new(id: usize, pos: Vec2, num_islands: usize, rng: &mut impl Rng) -> Self {
         let mut inventory = [0.0_f32; RESOURCE_COUNT];
         let mut production_rates = [0.0_f32; RESOURCE_COUNT];
@@ -357,6 +373,7 @@ impl Island {
             self.production_rates[spices_idx].min(non_grain_ceiling);
     }
 
+    /// Recomputes local scarcity-adjusted prices and updates this island's self ledger entry.
     pub fn recompute_local_prices(&mut self, tick: u64) {
         for resource in Resource::iter() {
             let index = resource.idx();
@@ -374,12 +391,16 @@ impl Island {
         }
     }
 
+    /// Marks that this island was directly observed at `tick`.
     pub fn mark_seen(&mut self, tick: u64) {
         if let Some(entry) = self.ledger.get_mut(self.id) {
             entry.last_seen_tick = tick;
         }
     }
 
+    /// Buys `resource` from a ship at bid price, limited by island cash.
+    ///
+    /// Returns `(filled_amount, total_value_paid)`.
     pub fn sell_to_island(
         &mut self,
         resource: Resource,
@@ -407,6 +428,9 @@ impl Island {
         (filled, total_value)
     }
 
+    /// Sells `resource` to a ship at ask price, limited by island inventory.
+    ///
+    /// Returns `(filled_amount, total_cost_charged)`.
     pub fn buy_from_island(
         &mut self,
         resource: Resource,
@@ -428,215 +452,112 @@ impl Island {
         (filled, total_cost)
     }
 
+    /// Credits dock services paid by ships and returns accepted payment.
     pub fn accept_service_payment(&mut self, repair_amount: f32, labor_amount: f32) -> f32 {
         let paid = repair_amount.max(0.0) + labor_amount.max(0.0);
         self.cash += paid;
         paid
     }
 
+    /// Applies one-time ship bankruptcy settlement credit to island cash.
     pub fn apply_ship_bankruptcy_settlement(&mut self, settlement: f32) {
         self.cash += settlement;
     }
 
+    /// Returns the island bid price for `resource` after applying spread.
     pub fn bid_price(&self, resource: Resource, market_spread: f32) -> f32 {
         self.local_prices[resource.idx()] * bid_multiplier(market_spread)
     }
 
+    /// Returns the island ask price for `resource` after applying spread.
     pub fn ask_price(&self, resource: Resource, market_spread: f32) -> f32 {
         self.local_prices[resource.idx()] * ask_multiplier(market_spread)
     }
+}
 
-    pub fn draw(&self, world_units_per_pixel: f32) {
-        let bar_width = 4.0 * world_units_per_pixel;
-        let bar_gap = 1.0 * world_units_per_pixel;
-        let chart_width =
-            (RESOURCE_COUNT as f32 * bar_width) + ((RESOURCE_COUNT as f32 - 1.0) * bar_gap);
-        let chart_height = 14.0 * world_units_per_pixel;
-        let panel_padding = 2.0 * world_units_per_pixel;
-        let border_thickness = 1.0 * world_units_per_pixel;
-        let status_gap = 2.0 * world_units_per_pixel;
-        let status_row_height = 2.0 * world_units_per_pixel;
-        let status_row_spacing = 1.0 * world_units_per_pixel;
-        let origin_x = self.pos.x - chart_width * 0.5;
-        let origin_y = self.pos.y - chart_height * 0.5;
-        let frame_x = origin_x - panel_padding;
-        let frame_y = origin_y - panel_padding;
-        let frame_w = chart_width + panel_padding * 2.0;
-        let frame_h = chart_height + panel_padding * 2.0;
-        let status_panel_h =
-            panel_padding * 2.0 + status_row_height * 3.0 + status_row_spacing * 2.0;
-        let status_panel_y = frame_y + frame_h + status_gap;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::{rngs::StdRng, SeedableRng};
 
-        draw_rectangle(
-            frame_x,
-            frame_y,
-            frame_w,
-            frame_h,
-            Color::from_rgba(12, 24, 40, 180),
-        );
-
-        draw_rectangle(frame_x, frame_y, frame_w, border_thickness, WHITE);
-        draw_rectangle(
-            frame_x,
-            frame_y + frame_h - border_thickness,
-            frame_w,
-            border_thickness,
-            WHITE,
-        );
-        draw_rectangle(frame_x, frame_y, border_thickness, frame_h, WHITE);
-        draw_rectangle(
-            frame_x + frame_w - border_thickness,
-            frame_y,
-            border_thickness,
-            frame_h,
-            WHITE,
-        );
-
-        let max_inventory = self
-            .inventory
-            .iter()
-            .copied()
-            .fold(0.0_f32, f32::max)
-            .max(1.0);
-
-        for (bar_index, resource) in Resource::iter().enumerate() {
-            let value = self.inventory[resource.idx()].max(0.0);
-            let normalized = (value / max_inventory).clamp(0.0, 1.0);
-            let mut bar_height = normalized * chart_height;
-            if value > 0.0 {
-                bar_height = bar_height.max(1.0 * world_units_per_pixel);
-            }
-            let x = origin_x + bar_index as f32 * (bar_width + bar_gap);
-            let y = origin_y + chart_height - bar_height;
-
-            let color = match resource {
-                Resource::Grain => YELLOW,
-                Resource::Timber => GREEN,
-                Resource::Iron => DARKGRAY,
-                Resource::Tools => RED,
-                Resource::Spices => PURPLE,
-            };
-
-            draw_rectangle(x, y, bar_width, bar_height, color);
-        }
-
-        draw_rectangle(
-            frame_x,
-            status_panel_y,
-            frame_w,
-            status_panel_h,
-            Color::from_rgba(12, 24, 40, 180),
-        );
-
-        draw_rectangle(frame_x, status_panel_y, frame_w, border_thickness, WHITE);
-        draw_rectangle(
-            frame_x,
-            status_panel_y + status_panel_h - border_thickness,
-            frame_w,
-            border_thickness,
-            WHITE,
-        );
-        draw_rectangle(
-            frame_x,
-            status_panel_y,
-            border_thickness,
-            status_panel_h,
-            WHITE,
-        );
-        draw_rectangle(
-            frame_x + frame_w - border_thickness,
-            status_panel_y,
-            border_thickness,
-            status_panel_h,
-            WHITE,
-        );
-
-        let pop_fill =
-            (self.population / (self.population + POPULATION_DISPLAY_SCALE)).clamp(0.0, 1.0);
-        let cash_fill = (self.cash / (self.cash + CASH_DISPLAY_SCALE)).clamp(0.0, 1.0);
-        let infra_fill = (self.infrastructure_level / INFRASTRUCTURE_DISPLAY_MAX).clamp(0.0, 1.0);
-
-        let status_inner_x = frame_x + panel_padding;
-        let status_inner_w = (frame_w - panel_padding * 2.0).max(0.0);
-        let row1_y = status_panel_y + panel_padding;
-        let row2_y = row1_y + status_row_height + status_row_spacing;
-        let row3_y = row2_y + status_row_height + status_row_spacing;
-
-        draw_rectangle(
-            status_inner_x,
-            row1_y,
-            status_inner_w,
-            status_row_height,
-            DARKGRAY,
-        );
-        draw_rectangle(
-            status_inner_x,
-            row1_y,
-            status_inner_w * pop_fill,
-            status_row_height,
-            SKYBLUE,
-        );
-
-        draw_rectangle(
-            status_inner_x,
-            row2_y,
-            status_inner_w,
-            status_row_height,
-            DARKGRAY,
-        );
-        draw_rectangle(
-            status_inner_x,
-            row2_y,
-            status_inner_w * cash_fill,
-            status_row_height,
-            GOLD,
-        );
-
-        draw_rectangle(
-            status_inner_x,
-            row3_y,
-            status_inner_w,
-            status_row_height,
-            DARKGRAY,
-        );
-        draw_rectangle(
-            status_inner_x,
-            row3_y,
-            status_inner_w * infra_fill,
-            status_row_height,
-            ORANGE,
-        );
+    fn approx_eq(left: f32, right: f32) {
+        assert!((left - right).abs() <= 1e-4, "left={left}, right={right}");
     }
 
-    pub fn draw_selection_border(&self, world_units_per_pixel: f32) {
-        let bar_width = 4.0 * world_units_per_pixel;
-        let bar_gap = 1.0 * world_units_per_pixel;
-        let chart_width =
-            (RESOURCE_COUNT as f32 * bar_width) + ((RESOURCE_COUNT as f32 - 1.0) * bar_gap);
-        let chart_height = 14.0 * world_units_per_pixel;
-        let panel_padding = 2.0 * world_units_per_pixel;
-        let status_gap = 2.0 * world_units_per_pixel;
-        let status_row_height = 2.0 * world_units_per_pixel;
-        let status_row_spacing = 1.0 * world_units_per_pixel;
-        let origin_x = self.pos.x - chart_width * 0.5;
-        let origin_y = self.pos.y - chart_height * 0.5;
-        let frame_x = origin_x - panel_padding;
-        let frame_y = origin_y - panel_padding;
-        let frame_w = chart_width + panel_padding * 2.0;
-        let frame_h = chart_height + panel_padding * 2.0;
-        let status_panel_h =
-            panel_padding * 2.0 + status_row_height * 3.0 + status_row_spacing * 2.0;
-        let status_panel_y = frame_y + frame_h + status_gap;
-        let highlight_thickness = 3.0 * world_units_per_pixel;
+    #[test]
+    fn recompute_prices_updates_self_ledger_entry() {
+        let mut rng = StdRng::seed_from_u64(7);
+        let mut island = Island::new(0, Vec2::new(0.0, 0.0), 3, &mut rng);
+        island.inventory = [0.0, 20.0, 30.0, 40.0, 50.0];
+        island.cash = 1234.0;
+        island.infrastructure_level = 1.75;
 
-        draw_rectangle_lines(frame_x, frame_y, frame_w, frame_h, highlight_thickness, RED);
-        draw_rectangle_lines(
-            frame_x,
-            status_panel_y,
-            frame_w,
-            status_panel_h,
-            highlight_thickness,
-            RED,
+        island.recompute_local_prices(42);
+
+        let entry = island.ledger[0];
+        assert_eq!(entry.prices, island.local_prices);
+        assert_eq!(entry.inventories, island.inventory);
+        approx_eq(entry.cash, island.cash);
+        approx_eq(entry.infrastructure_level, island.infrastructure_level);
+        assert_eq!(entry.tick_updated, 42);
+        assert!(island.local_prices[Resource::Grain.idx()] > BASE_COSTS[Resource::Grain.idx()]);
+    }
+
+    #[test]
+    fn sell_to_island_respects_affordability() {
+        let mut rng = StdRng::seed_from_u64(11);
+        let mut island = Island::new(0, Vec2::new(0.0, 0.0), 1, &mut rng);
+        island.cash = 10.0;
+        island.local_prices[Resource::Tools.idx()] = 120.0;
+        let starting_tools = island.inventory[Resource::Tools.idx()];
+
+        let (filled, paid) = island.sell_to_island(Resource::Tools, 1.0, 0.1);
+        let expected_price = 120.0 * (1.0 - 0.1 * 0.5);
+        let expected_filled = 10.0 / expected_price;
+
+        approx_eq(filled, expected_filled);
+        approx_eq(paid, 10.0);
+        approx_eq(
+            island.inventory[Resource::Tools.idx()],
+            starting_tools + expected_filled,
         );
+        approx_eq(island.cash, 0.0);
+    }
+
+    #[test]
+    fn buy_from_island_is_inventory_limited() {
+        let mut rng = StdRng::seed_from_u64(19);
+        let mut island = Island::new(0, Vec2::new(0.0, 0.0), 1, &mut rng);
+        island.inventory[Resource::Grain.idx()] = 2.0;
+        island.local_prices[Resource::Grain.idx()] = 50.0;
+        let starting_cash = island.cash;
+
+        let (filled, cost) = island.buy_from_island(Resource::Grain, 5.0, 0.1);
+
+        approx_eq(filled, 2.0);
+        approx_eq(cost, 2.0 * 50.0 * 1.05);
+        approx_eq(island.inventory[Resource::Grain.idx()], 0.0);
+        approx_eq(island.cash, starting_cash + cost);
+    }
+
+    #[test]
+    fn produce_consume_and_price_keeps_state_bounded() {
+        let mut rng = StdRng::seed_from_u64(23);
+        let mut island = Island::new(0, Vec2::new(0.0, 0.0), 1, &mut rng);
+        island.population = 64.0;
+        island.inventory = [30.0, 30.0, 30.0, 30.0, 30.0];
+        island.production_rates = [1.0, 1.0, 1.0, 0.0, 0.2];
+        island.consumption_rates = [0.5, 0.1, 0.1, 0.1, 0.05];
+
+        island.produce_consume_and_price(1.0, 99);
+
+        for amount in island.inventory {
+            assert!(amount.is_finite());
+            assert!(amount >= 0.0);
+        }
+        assert!(island.population.is_finite());
+        assert!(island.population >= MIN_POPULATION);
+        assert!(island.population <= island.population_capacity.max(MIN_POPULATION));
+        assert_eq!(island.ledger[0].tick_updated, 99);
     }
 }

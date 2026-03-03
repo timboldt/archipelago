@@ -2,17 +2,21 @@
 
 use macroquad::prelude::*;
 
+use super::island_ui;
 use super::World;
 
 /// Draws simulation entities and active selection highlights in world space.
 pub(super) fn draw_world(world: &World, world_units_per_pixel: f32) {
     for island in &world.islands {
-        island.draw(world_units_per_pixel);
+        island_ui::draw_island(island, world_units_per_pixel);
     }
 
     if !world.islands.is_empty() {
         let selected_island_idx = world.selected_island_index.min(world.islands.len() - 1);
-        world.islands[selected_island_idx].draw_selection_border(world_units_per_pixel);
+        island_ui::draw_island_selection_border(
+            &world.islands[selected_island_idx],
+            world_units_per_pixel,
+        );
     }
 
     for ship in world.ships.iter().flatten() {
