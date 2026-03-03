@@ -1,3 +1,8 @@
+//! Screen-space HUD and inspector panel rendering.
+//!
+//! Rendering consumes precomputed view models to keep drawing code focused on
+//! presentation and layout only.
+
 use macroquad::prelude::*;
 
 use crate::island::RESOURCE_COUNT;
@@ -16,6 +21,7 @@ const SHIP_INSPECT_H: f32 = 226.0;
 const ISLAND_INSPECT_H: f32 = 208.0;
 const INSPECT_GAP: f32 = 12.0;
 
+/// Draws the left legend/perf panel and right ship/island inspectors.
 pub(super) fn draw_ui(world: &World) {
     let summary = view_model::hud_summary(world);
 

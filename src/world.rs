@@ -1,3 +1,8 @@
+//! Core world state and simulation orchestration.
+//!
+//! `World` owns islands/ships, advances the simulation in fixed phases,
+//! and delegates rendering to specialized submodules.
+
 use ::rand::Rng;
 use macroquad::prelude::*;
 use rayon::prelude::*;
@@ -11,6 +16,7 @@ mod hud;
 mod ui;
 mod view_model;
 
+/// Width/height of the square simulation space in world units.
 pub const WORLD_SIZE: f32 = 5000.0;
 const ISLAND_SPAWN_MARGIN: f32 = 200.0;
 const MIN_ISLAND_SPAWN_DISTANCE: f32 = 140.0;
@@ -27,6 +33,7 @@ const PERF_HUD_UPDATE_INTERVAL_SECS: f32 = 1.0;
 const STARTING_SIM_TICK: u64 = 500;
 
 #[derive(Clone, Copy, Default)]
+/// Aggregated phase timings used by the performance HUD.
 struct FrameTimings {
     economy_ms: f32,
     movement_ms: f32,
@@ -36,6 +43,7 @@ struct FrameTimings {
 }
 
 impl FrameTimings {
+    /// Accumulates timing values from another sample.
     fn add_assign(&mut self, other: &FrameTimings) {
         self.economy_ms += other.economy_ms;
         self.movement_ms += other.movement_ms;
@@ -44,6 +52,7 @@ impl FrameTimings {
         self.total_ms += other.total_ms;
     }
 
+    /// Returns a copy with each timing field multiplied by `scale`.
     fn scaled(&self, scale: f32) -> Self {
         Self {
             economy_ms: self.economy_ms * scale,
@@ -55,6 +64,7 @@ impl FrameTimings {
     }
 }
 
+/// Central simulation container for islands, ships, selection state, and timing.
 pub struct World {
     pub islands: Vec<Island>,
     pub ships: Vec<Option<Ship>>,
@@ -72,6 +82,7 @@ pub struct World {
 }
 
 impl World {
+    /// Creates a new world with randomly placed islands and seeded ships.
     pub fn new(num_islands: usize, num_ships: usize) -> Self {
         let mut rng = ::rand::thread_rng();
 
@@ -159,10 +170,12 @@ impl World {
         }
     }
 
+    /// Updates environmental planning parameters used by ship logic.
     pub fn set_planning_tuning(&mut self, planning_tuning: PlanningTuning) {
         self.planning_tuning = planning_tuning;
     }
 
+    /// Handles runtime selection input for ships and islands.
     pub fn handle_input(&mut self) {
         let shift_down = is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift);
         if is_key_pressed(KeyCode::LeftBracket) {
@@ -181,6 +194,7 @@ impl World {
         }
     }
 
+    /// Computes effective tuning after applying crowding-dependent friction.
     fn environmental_tuning(&self) -> PlanningTuning {
         let island_count = self.islands.len().max(1) as f32;
         let target_population = (island_count * TARGET_SHIPS_PER_ISLAND).max(1.0);
@@ -191,14 +205,17 @@ impl World {
         tuning
     }
 
+    /// Returns the number of non-empty ship slots.
     fn active_ship_count(&self) -> usize {
         self.ships.iter().filter(|ship| ship.is_some()).count()
     }
 
+    /// Returns the first active ship slot index, if any.
     fn first_active_ship_index(&self) -> Option<usize> {
         self.ships.iter().position(|ship| ship.is_some())
     }
 
+    /// Finds the next active ship index from `from`, wrapping around the fleet.
     fn find_next_active_ship_index(&self, from: usize, forward: bool) -> Option<usize> {
         if self.ships.is_empty() {
             return None;
@@ -219,6 +236,7 @@ impl World {
         None
     }
 
+    /// Repairs the selected ship index after culls/spawns/slot invalidation.
     fn ensure_selected_ship_valid(&mut self) {
         if self.ships.is_empty() {
             self.selected_ship_index = 0;
@@ -232,6 +250,7 @@ impl World {
         }
     }
 
+    /// Selects the next active ship, wrapping around.
     pub fn select_next_ship(&mut self) {
         if self.active_ship_count() == 0 {
             self.selected_ship_index = 0;
@@ -243,6 +262,7 @@ impl World {
             .unwrap_or(self.selected_ship_index);
     }
 
+    /// Selects the previous active ship, wrapping around.
     pub fn select_previous_ship(&mut self) {
         if self.active_ship_count() == 0 {
             self.selected_ship_index = 0;
@@ -254,6 +274,7 @@ impl World {
             .unwrap_or(self.selected_ship_index);
     }
 
+    /// Selects the next island, wrapping around.
     pub fn select_next_island(&mut self) {
         if self.islands.is_empty() {
             self.selected_island_index = 0;
@@ -262,6 +283,7 @@ impl World {
         self.selected_island_index = (self.selected_island_index + 1) % self.islands.len();
     }
 
+    /// Selects the previous island, wrapping around.
     pub fn select_previous_island(&mut self) {
         if self.islands.is_empty() {
             self.selected_island_index = 0;
@@ -274,6 +296,7 @@ impl World {
         }
     }
 
+    /// Advances the simulation by `dt` seconds using a fixed phase order.
     pub fn update(&mut self, dt: f32) {
         let frame_start = Instant::now();
         let mut current_frame_timings = FrameTimings::default();
@@ -323,6 +346,7 @@ impl World {
         }
     }
 
+    /// Expires route-history contributions that rolled out of the window.
     fn begin_route_history_tick(&mut self) {
         let cursor = self.route_history_cursor;
         for origin_id in 0..self.recent_route_departures.len() {
@@ -337,6 +361,7 @@ impl World {
         }
     }
 
+    /// Runs island production/consumption/pricing updates in parallel.
     fn update_island_economy(&mut self, dt: f32) {
         let tick = self.tick;
         self.islands
@@ -344,6 +369,7 @@ impl World {
             .for_each(|island| island.produce_consume_and_price(dt, tick));
     }
 
+    /// Advances ship movement in parallel.
     fn move_ships(&mut self, dt: f32) {
         self.ships.par_iter_mut().for_each(|slot| {
             if let Some(ship) = slot.as_mut() {
@@ -352,6 +378,7 @@ impl World {
         });
     }
 
+    /// Applies continuous maritime operating friction to ships in parallel.
     fn apply_maritime_friction(&mut self, dt: f32) {
         let global_friction_mult = self.environmental_tuning().global_friction_mult;
         self.ships.par_iter_mut().for_each(|slot| {
@@ -361,6 +388,7 @@ impl World {
         });
     }
 
+    /// Applies periodic selection pressure: cull weak ships and spawn daughters.
     fn evolve_fleet(&mut self) {
         let scuttle_threshold = STARTING_CASH * SCUTTLE_THRESHOLD_MULTIPLIER;
         let island_count = self.islands.len().max(1) as f32;
@@ -399,6 +427,7 @@ impl World {
         self.ensure_selected_ship_valid();
     }
 
+    /// Draws world-space simulation entities and selection overlays.
     pub fn draw(&self) {
         let world_units_per_pixel_x = WORLD_SIZE / screen_width().max(1.0);
         let world_units_per_pixel_y = WORLD_SIZE / screen_height().max(1.0);
@@ -406,6 +435,7 @@ impl World {
         ui::draw_world(self, world_units_per_pixel);
     }
 
+    /// Draws screen-space HUD and inspector panels.
     pub fn draw_ui(&self) {
         hud::draw_ui(self);
     }

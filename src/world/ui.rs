@@ -1,7 +1,10 @@
+//! World-space rendering helpers for islands, ships, and selections.
+
 use macroquad::prelude::*;
 
 use super::World;
 
+/// Draws simulation entities and active selection highlights in world space.
 pub(super) fn draw_world(world: &World, world_units_per_pixel: f32) {
     for island in &world.islands {
         island.draw(world_units_per_pixel);

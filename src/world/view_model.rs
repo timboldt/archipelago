@@ -1,8 +1,14 @@
+//! UI view-model builders for HUD and inspector panels.
+//!
+//! These types/functions convert live simulation state into display-ready values
+//! so rendering modules stay presentation-oriented.
+
 use crate::island::{Resource, RESOURCE_COUNT};
 use crate::ship::ShipArchetype;
 
 use super::World;
 
+/// Aggregated top-level metrics shown in the left HUD panel.
 pub(super) struct HudSummary {
     pub total_inventory: [f32; RESOURCE_COUNT],
     pub total_population: f32,
@@ -20,6 +26,7 @@ pub(super) struct HudSummary {
     pub perf_total_ms: f32,
 }
 
+/// Display-ready fields for the selected-ship inspector panel.
 pub(super) struct ShipInspectorView {
     pub has_ship: bool,
     pub ship_id_text: String,
@@ -33,6 +40,7 @@ pub(super) struct ShipInspectorView {
     pub dominant_cargo_text: String,
 }
 
+/// Display-ready fields for the selected-island inspector panel.
 pub(super) struct IslandInspectorView {
     pub has_island: bool,
     pub island_id_text: String,
@@ -43,6 +51,7 @@ pub(super) struct IslandInspectorView {
     pub price_text: String,
 }
 
+/// Builds aggregate HUD metrics from the current world state.
 pub(super) fn hud_summary(world: &World) -> HudSummary {
     let mut total_inventory = [0.0_f32; RESOURCE_COUNT];
     let mut total_population = 0.0_f32;
@@ -92,6 +101,7 @@ pub(super) fn hud_summary(world: &World) -> HudSummary {
     }
 }
 
+/// Builds selected-ship inspector content (or an empty-state payload).
 pub(super) fn ship_inspector_view(world: &World, active_ship_count: usize) -> ShipInspectorView {
     let selected_idx = world.selected_ship_index;
     let Some(ship) = world.ships.get(selected_idx).and_then(|slot| slot.as_ref()) else {
@@ -170,6 +180,7 @@ pub(super) fn ship_inspector_view(world: &World, active_ship_count: usize) -> Sh
     }
 }
 
+/// Builds selected-island inspector content (or an empty-state payload).
 pub(super) fn island_inspector_view(world: &World) -> IslandInspectorView {
     if world.islands.is_empty() {
         return IslandInspectorView {

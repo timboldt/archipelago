@@ -1,3 +1,8 @@
+//! Docking-phase processing for ships grouped by island.
+//!
+//! This module keeps the high-contention trade/ledger logic out of `world.rs`
+//! while preserving identical simulation ordering and behavior.
+
 use macroquad::prelude::Vec2;
 use rayon::prelude::*;
 
@@ -6,6 +11,7 @@ use crate::ship::{LoadPlanningContext, PlanningTuning, Ship};
 
 use super::{World, MAX_DOCK_SETTLEMENT_STEPS};
 
+/// Result of processing one island's docked ships for a tick.
 struct IslandBatchResult {
     ships: Vec<(usize, Ship)>,
     outbound_recent_departures: Vec<f32>,
@@ -13,6 +19,7 @@ struct IslandBatchResult {
 }
 
 impl World {
+    /// Processes all docked ships for one island using the current tick snapshot.
     fn process_island_docked_batch(
         island_id: usize,
         island: &mut Island,
@@ -129,6 +136,7 @@ impl World {
         }
     }
 
+    /// Runs the docking phase: bucket ships by island, process in parallel, reinsert by slot.
     pub(super) fn process_docked_ships(&mut self) {
         let island_count = self.islands.len();
         if island_count == 0 {
