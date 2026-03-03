@@ -42,6 +42,7 @@ cargo +nightly fmt
 - **Island spawn spacing:** Islands spawn with a minimum separation target to reduce chart/icon overlap in dense regions.
 - **Island visuals:** Islands are drawn as compact 5-bar charts for Grain, Timber, Iron, Tools, and Spices abundance.
 - **Island module boundaries:** `Island` now contains economy/market logic only; world-space island rendering lives under `src/world/` UI helpers.
+- **Ship module boundaries:** `Ship` now contains movement/planning/settlement logic only; world-space ship rendering lives under `src/world/` UI helpers.
 - **Ship visuals:** Ship shape encodes archetype (Freighter = square, Runner = triangle, Coaster = circle), and ship color reflects whichever cargo resource is largest by onboard value.
 - **Island status bars:** Each island chart now includes three horizontal bars beneath it for Population, Cash, and Infrastructure.
 - **Chart readability:** Island chart dimensions are scaled from current view units-per-pixel so bars stay legible across zoom/viewport changes.

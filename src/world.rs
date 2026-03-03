@@ -14,6 +14,7 @@ use crate::ship::{PlanningTuning, Ship, STARTING_CASH};
 mod docking;
 mod hud;
 mod island_ui;
+mod ship_ui;
 mod ui;
 mod view_model;
 

@@ -3,6 +3,7 @@
 use macroquad::prelude::*;
 
 use super::island_ui;
+use super::ship_ui;
 use super::World;
 
 /// Draws simulation entities and active selection highlights in world space.
@@ -20,7 +21,7 @@ pub(super) fn draw_world(world: &World, world_units_per_pixel: f32) {
     }
 
     for ship in world.ships.iter().flatten() {
-        ship.draw();
+        ship_ui::draw_ship(ship);
     }
 
     if let Some(ship) = world

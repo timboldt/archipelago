@@ -1,5 +1,5 @@
 use ::rand::Rng;
-use macroquad::prelude::*;
+use macroquad::prelude::Vec2;
 use strum::IntoEnumIterator;
 
 use crate::island::{
@@ -40,9 +40,13 @@ const COASTER_DISTANCE_COST_MULTIPLIER: f32 = 0.80;
 const FREIGHTER_DISTANCE_COST_MULTIPLIER: f32 = 1.10;
 
 #[derive(Clone, Copy, Debug)]
+/// Environment-level knobs used during route utility and settlement planning.
 pub struct PlanningTuning {
+    /// Multiplier applied to transit friction/cost terms.
     pub global_friction_mult: f32,
+    /// Confidence decay rate applied to stale ledger information.
     pub info_decay_rate: f32,
+    /// Symmetric market spread used for bid/ask conversion.
     pub market_spread: f32,
 }
 
@@ -114,6 +118,7 @@ fn ask_multiplier(market_spread: f32) -> f32 {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Last dock action outcome for a ship.
 pub enum DockAction {
     None,
     Sold,
@@ -122,12 +127,14 @@ pub enum DockAction {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Broad operational profile derived from hull size.
 pub enum ShipArchetype {
     Runner,
     Freighter,
     Coaster,
 }
 
+/// Core ship simulation state: movement, cargo, planning, and market knowledge.
 pub struct Ship {
     pub pos: Vec2,
     target: Vec2,
@@ -158,6 +165,7 @@ pub struct Ship {
 }
 
 impl Ship {
+    /// Creates a ship with randomized trait genes and fixed-size ledger state.
     pub fn new(pos: Vec2, speed: f32, num_islands: usize, docked_island_id: usize) -> Self {
         let mut rng = ::rand::thread_rng();
         let hull_size = rng.gen_range(MIN_HULL_SIZE..MAX_HULL_SIZE);
@@ -434,14 +442,17 @@ impl Ship {
         }
     }
 
+    /// Returns the currently docked island id, if any.
     pub fn docked_island(&self) -> Option<usize> {
         self.docked_at
     }
 
+    /// Returns current dock id or last known dock id if in transit.
     pub fn last_docked_island(&self) -> Option<usize> {
         self.docked_at.or(self.last_docked_island_id)
     }
 
+    /// Estimates current ship net worth (cash + conservative cargo - service debt).
     pub fn estimated_net_worth(&self) -> f32 {
         let mut net_worth = self.cash.max(0.0);
         for resource in Resource::iter() {
@@ -481,10 +492,12 @@ impl Ship {
         self.last_step_distance = 0.0;
     }
 
+    /// Returns true when cash after service debt falls below bankruptcy floor.
     pub fn is_bankrupt(&self) -> bool {
         self.cash - self.total_service_debt() < BANKRUPTCY_CASH_FLOOR
     }
 
+    /// Returns hull-derived operational archetype.
     pub fn archetype(&self) -> ShipArchetype {
         self.profile_archetype_from_hull()
     }
@@ -509,6 +522,7 @@ impl Ship {
         self.maintenance_rate
     }
 
+    /// Returns current target island id while en route.
     pub fn target_island(&self) -> Option<usize> {
         self.target_island_id
     }
@@ -1525,51 +1539,6 @@ impl Ship {
             None
         }
     }
-
-    pub fn draw(&self) {
-        let fill = match self.dominant_cargo_resource_by_value() {
-            Some(resource) => match resource {
-                Resource::Grain => YELLOW,
-                Resource::Timber => GREEN,
-                Resource::Iron => DARKGRAY,
-                Resource::Tools => RED,
-                Resource::Spices => PURPLE,
-            },
-            None => WHITE,
-        };
-
-        match self.archetype() {
-            ShipArchetype::Freighter => {
-                let half_size = 7.0;
-                draw_rectangle(
-                    self.pos.x - half_size,
-                    self.pos.y - half_size,
-                    half_size * 2.0,
-                    half_size * 2.0,
-                    fill,
-                );
-                draw_rectangle_lines(
-                    self.pos.x - half_size,
-                    self.pos.y - half_size,
-                    half_size * 2.0,
-                    half_size * 2.0,
-                    2.0,
-                    LIGHTGRAY,
-                );
-            }
-            ShipArchetype::Runner => {
-                let top = vec2(self.pos.x, self.pos.y - 8.0);
-                let left = vec2(self.pos.x - 7.0, self.pos.y + 6.0);
-                let right = vec2(self.pos.x + 7.0, self.pos.y + 6.0);
-                draw_triangle(top, left, right, fill);
-                draw_triangle_lines(top, left, right, 2.0, LIGHTGRAY);
-            }
-            ShipArchetype::Coaster => {
-                draw_circle(self.pos.x, self.pos.y, 8.0, fill);
-                draw_circle_lines(self.pos.x, self.pos.y, 8.0, 2.0, LIGHTGRAY);
-            }
-        }
-    }
 }
 
 fn mutate_gene_gaussian(
@@ -1584,4 +1553,48 @@ fn mutate_gene_gaussian(
     let u2: f32 = rng.gen_range(0.0..1.0);
     let z0 = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos();
     (value + z0 * sigma).clamp(min_value, max_value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn update_reaches_target_and_docks() {
+        let mut ship = Ship::new(Vec2::new(0.0, 0.0), 300.0, 3, 0);
+        ship.set_target(1, Vec2::new(10.0, 0.0));
+
+        let docked = ship.update(1.0);
+
+        assert_eq!(docked, Some(1));
+        assert_eq!(ship.docked_island(), Some(1));
+        assert_eq!(ship.pos, Vec2::new(10.0, 0.0));
+    }
+
+    #[test]
+    fn effective_tuning_applies_gene_and_clamps() {
+        let mut ship = Ship::new(Vec2::new(0.0, 0.0), 300.0, 2, 0);
+        ship.strategy_genes.confidence_decay_scale = 0.01;
+        let base = PlanningTuning {
+            global_friction_mult: 10.0,
+            info_decay_rate: 0.001,
+            market_spread: 2.0,
+        };
+
+        let tuned = ship.effective_tuning(&base);
+
+        assert_eq!(tuned.global_friction_mult, 6.0);
+        assert_eq!(tuned.market_spread, 0.80);
+        assert_eq!(tuned.info_decay_rate, 0.0001);
+    }
+
+    #[test]
+    fn bankruptcy_uses_service_debt_floor() {
+        let mut ship = Ship::new(Vec2::new(0.0, 0.0), 300.0, 2, 0);
+        ship.cash = -10.0;
+        ship.labor_debt = 8.0;
+        ship.repair_debt = 4.0;
+
+        assert!(ship.is_bankrupt());
+    }
 }
