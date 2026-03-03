@@ -79,6 +79,10 @@ const COASTER_MAX_ROUTE_FRACTION: f32 = 0.20;
 const DOCKED_PORT_FEE_MULTIPLIER: f32 = 1.5;
 const HEAVY_LOAD_WEAR_MULTIPLIER: f32 = 1.1;
 const BANKRUPTCY_CASH_FLOOR: f32 = -20.0;
+const BASE_DOCKING_TAX_RATE: f32 = 0.0015;
+const MAX_DOCKING_TAX_RATE: f32 = 0.02;
+const LIQUIDITY_IMBALANCE_TAX_SLOPE: f32 = 0.01;
+const DOCKING_TAX_CASH_RESERVE_MULTIPLIER: f32 = 0.75;
 const MIN_HULL_SIZE: f32 = 0.75;
 const MAX_HULL_SIZE: f32 = 1.60;
 const MIN_EFFICIENCY_RATING: f32 = 0.80;
@@ -649,6 +653,24 @@ impl Ship {
         self.cash -= payment;
         island.accept_service_payment(repair_paid, labor_paid);
         payment
+    }
+
+    pub fn pay_dynamic_docking_tax(&mut self, island: &mut Island) -> f32 {
+        let reserve_cash = STARTING_CASH * DOCKING_TAX_CASH_RESERVE_MULTIPLIER;
+        let taxable_cash = (self.cash - reserve_cash).max(0.0);
+        if taxable_cash <= 0.0 {
+            return 0.0;
+        }
+
+        let island_cash = (island.cash + STARTING_CASH).max(1.0);
+        let ship_island_ratio = self.cash.max(0.0) / island_cash;
+        let tax_rate = (BASE_DOCKING_TAX_RATE
+            + (ship_island_ratio - 1.0).max(0.0) * LIQUIDITY_IMBALANCE_TAX_SLOPE)
+            .clamp(0.0, MAX_DOCKING_TAX_RATE);
+        let tax = taxable_cash * tax_rate;
+        self.cash -= tax;
+        island.cash += tax;
+        tax
     }
 
     pub fn removal_cash_settlement(&self) -> f32 {

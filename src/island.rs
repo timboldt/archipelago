@@ -14,6 +14,8 @@ const INITIAL_INFRASTRUCTURE_MIN: f32 = 0.7;
 const INITIAL_INFRASTRUCTURE_MAX: f32 = 1.5;
 const INITIAL_INFRA_CREDIT_MIN: f32 = 900.0;
 const INITIAL_INFRA_CREDIT_MAX: f32 = 2600.0;
+const ISLAND_SIZE_FACTOR_MIN: f32 = 0.75;
+const ISLAND_SIZE_FACTOR_MAX: f32 = 1.40;
 const MIN_POPULATION: f32 = 8.0;
 const POPULATION_GROWTH_RATE: f32 = 0.07;
 const POPULATION_STARVATION_RATE: f32 = 0.08;
@@ -109,15 +111,18 @@ pub struct Island {
     pub cash: f32,
     pub infrastructure_level: f32,
     infra_credit: f32,
+    resource_capacity: Inventory,
+    population_capacity: f32,
+    infrastructure_capacity: f32,
     pub local_prices: [f32; RESOURCE_COUNT],
     pub ledger: PriceLedger,
 }
 
 impl Island {
     pub fn new(id: usize, pos: Vec2, num_islands: usize, rng: &mut impl Rng) -> Self {
-        let mut inventory = [0.0; RESOURCE_COUNT];
-        let mut production_rates = [0.0; RESOURCE_COUNT];
-        let mut consumption_rates = [0.0; RESOURCE_COUNT];
+        let mut inventory = [0.0_f32; RESOURCE_COUNT];
+        let mut production_rates = [0.0_f32; RESOURCE_COUNT];
+        let mut consumption_rates = [0.0_f32; RESOURCE_COUNT];
 
         for resource in Resource::iter() {
             let index = resource.idx();
@@ -165,6 +170,19 @@ impl Island {
             }
         }
 
+        let size_factor = rng.gen_range(ISLAND_SIZE_FACTOR_MIN..ISLAND_SIZE_FACTOR_MAX);
+        let mut resource_capacity = [0.0_f32; RESOURCE_COUNT];
+        for resource in Resource::iter() {
+            let idx = resource.idx();
+            let specialization_roll = rng.gen_range(0.80..1.25);
+            resource_capacity[idx] =
+                (INVENTORY_CARRYING_CAPACITY * size_factor * specialization_roll).max(40.0);
+            inventory[idx] = inventory[idx].min(resource_capacity[idx] * 0.8_f32);
+        }
+        let population_capacity = (160.0 * size_factor).max(MIN_POPULATION + 12.0);
+        let infrastructure_capacity = (MAX_INFRASTRUCTURE_LEVEL * (0.72 + 0.35 * size_factor))
+            .clamp(0.9, MAX_INFRASTRUCTURE_LEVEL);
+
         let focus_resource = match rng.gen_range(0..4) {
             0 => Resource::Grain,
             1 => Resource::Timber,
@@ -196,6 +214,9 @@ impl Island {
             infrastructure_level: rng
                 .gen_range(INITIAL_INFRASTRUCTURE_MIN..INITIAL_INFRASTRUCTURE_MAX),
             infra_credit: rng.gen_range(INITIAL_INFRA_CREDIT_MIN..INITIAL_INFRA_CREDIT_MAX),
+            resource_capacity,
+            population_capacity,
+            infrastructure_capacity,
             local_prices: [0.0; RESOURCE_COUNT],
             ledger: vec![
                 PriceEntry {
@@ -228,12 +249,15 @@ impl Island {
         {
             self.reset_survival_focus();
         }
-        self.population = self.population.max(MIN_POPULATION);
+        self.population = self
+            .population
+            .clamp(MIN_POPULATION, self.population_capacity.max(MIN_POPULATION));
 
         for resource in Resource::iter() {
             let index = resource.idx();
             let inventory = self.inventory[index];
-            let logistic_factor = (1.0 - (inventory / INVENTORY_CARRYING_CAPACITY)).clamp(0.0, 1.0);
+            let capacity = self.resource_capacity[index].max(1.0);
+            let logistic_factor = (1.0 - (inventory / capacity)).clamp(0.0, 1.0);
 
             if resource != Resource::Tools {
                 let tools_boost = (1.0
@@ -248,6 +272,7 @@ impl Island {
                 }
                 extraction *= tools_boost;
                 self.inventory[index] += extraction;
+                self.inventory[index] = self.inventory[index].min(capacity);
             }
 
             let demand = self.consumption_rates[index] * self.population * dt;
@@ -280,9 +305,12 @@ impl Island {
             * labor_multiplier
             * adaptive_tool_boost
             * dt;
+        let tool_headroom =
+            (self.resource_capacity[tools_idx] - self.inventory[tools_idx]).max(0.0);
         let feasible_batch = (self.inventory[iron_idx] / TOOL_IRON_PER_BATCH)
             .min(self.inventory[timber_idx] / TOOL_TIMBER_PER_BATCH)
             .min(industrial_rate)
+            .min(tool_headroom / TOOL_OUTPUT_PER_BATCH)
             .max(0.0);
         if feasible_batch > 0.0 {
             self.inventory[iron_idx] -= feasible_batch * TOOL_IRON_PER_BATCH;
@@ -290,9 +318,13 @@ impl Island {
             self.inventory[tools_idx] += feasible_batch * TOOL_OUTPUT_PER_BATCH;
         }
 
+        let infra_headroom_ratio = ((self.infrastructure_capacity - self.infrastructure_level)
+            / self.infrastructure_capacity.max(0.01))
+        .clamp(0.0, 1.0);
         let infra_credit_income = (self.population * PER_CAPITA_INFRA_CREDIT_GENERATION
             + feasible_batch * INDUSTRIAL_INFRA_CREDIT_GENERATION)
-            * dt;
+            * dt
+            * infra_headroom_ratio;
         self.infra_credit += infra_credit_income.max(0.0);
 
         if self.infra_credit > CAPITAL_INVESTMENT_THRESHOLD {
@@ -301,7 +333,7 @@ impl Island {
             self.infra_credit -= investment;
             self.infrastructure_level = (self.infrastructure_level
                 + investment * INFRASTRUCTURE_INVESTMENT_EFFICIENCY)
-                .min(MAX_INFRASTRUCTURE_LEVEL);
+                .min(self.infrastructure_capacity);
         }
 
         self.recompute_local_prices(tick);

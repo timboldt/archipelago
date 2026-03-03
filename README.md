@@ -73,11 +73,13 @@ cargo +nightly fmt
 - **Survival safety net:** If an island falls to minimum population while starving, it automatically re-prioritizes grain extraction to restart its local economy.
 - **Tools as multiplier:** Tool stock boosts raw extraction productivity up to a cap, creating industrial demand for tools beyond pure arbitrage.
 - **Island capital:** Islands now carry finite `cash`; they can only buy from ships up to affordability, and earn cash when ships purchase local inventory.
+- **Island size limits:** Each island now has latent size/endowment caps for per-resource inventory, population, and infrastructure, which flatten growth near limits.
 - **Closed-loop island cash:** Islands no longer mint/burn cash from endogenous production/upkeep terms; trade and dock settlements are the primary cash-flow paths.
 - **Infrastructure credit loop:** Islands accrue internal infrastructure credit (separate from cash) and spend that credit on infrastructure growth.
 - **Transport cost:** Planning continues to price distance/time friction into expected utility so route choice remains cost-aware.
 - **Maritime friction:** Ships accrue (1) time-based labor/provisions and (2) distance-based repair wear as dock-payable debt.
 - **Dock settlement:** After selling/bartering cargo, ships settle accrued labor/repair debt to the island before loading the next leg.
+- **Dynamic docking tax:** Ports levy a liquidity-aware tax on ship cash surplus (above a reserve) when dock actions occur; rates rise when ships are cash-rich relative to the island.
 - **Dock-only bankruptcy:** Bankruptcy culling is resolved at dock; a bankrupt ship transfers its remaining cash to the docked island before removal.
 - **Provision scarcity ceiling:** Friction self-adjusts with fleet crowding (ships vs target ships per island), creating a self-limiting competitive overhead as population grows.
 - **Pair-based load selection:** Empty ships score full `(local resource -> destination island)` pairs and buy the resource from the best pair, rather than picking the cheapest local good first.
@@ -101,7 +103,7 @@ cargo +nightly fmt
 - **Ship trade-off triangle:** Each ship now carries coupled hull traits (size + efficiency) that jointly determine speed, cargo volume capacity, rigging/repair wear rate, and ongoing labor/provisions burn; hull size strongly anchors speed class so runners are visibly faster while freighters are slower.
 - **Archetype profiles:** Hull bands map to explicit profiles with clear separation: Runner (`speed≈1.5x`, `capacity≈0.75x`, `labor burn≈1.5x`), Coaster (`1.0x`, `1.0x`, `0.75x`), Freighter (`0.75x`, `2.0x`, `1.0x`) before efficiency modulation.
 - **Operational niches:** Mutation and selection can produce fast runners (high speed/low capacity), bulk haulers (high capacity/lower speed), and efficient coasters (lower rigging/labor drag).
-- **Wealth tax / upkeep:** Every tick, each ship now pays trait-derived labor/provisions burn from cash (scaled by fleet crowding), and sailing applies additional distance wear, so persistently unprofitable traders eventually fail the scuttle threshold and are replaced by fitter descendants without collapsing the whole fleet.
+- **Wealth tax / upkeep:** Ships accrue trait-derived labor/provisions and wear liabilities in transit/dock phases, and also face liquidity-aware docking taxes, so persistently unprofitable traders eventually fail lifecycle thresholds.
 - **Bankruptcy failure:** If a ship arrives deeply insolvent and cannot recover via dock settlement (sell/barter phase), it is culled immediately (using a negative-cash floor rather than zero).
 - **Lifecycle selection:** Fleet composition evolves over time: low-cash ships are retired, while wealthy ships can split into daughter ships with small Gaussian strategy mutations (not restricted to docked-only parents).
 - **Scuttle semantics:** Scuttled ships are marked as empty slots (`None`) instead of compacting the ship array, and their remaining cash is applied to their last docked island.

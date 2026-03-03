@@ -84,6 +84,13 @@ impl World {
                 outbound_recent_departures: &outbound_recent_departures,
             };
             let _ = ship.trade_load_if_empty(island, exclude, &load_context);
+            if ship.cargo_changed_this_dock() {
+                let _ = ship.pay_dynamic_docking_tax(island);
+            }
+            if ship.is_bankrupt() {
+                island.apply_ship_bankruptcy_settlement(ship.removal_cash_settlement());
+                bankrupt[idx] = true;
+            }
         }
 
         let mut island_ledger_buffer = island.ledger.clone();
