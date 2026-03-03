@@ -3,8 +3,12 @@ use macroquad::prelude::*;
 use rayon::prelude::*;
 use std::time::Instant;
 
-use crate::island::{Island, Resource, RESOURCE_COUNT};
-use crate::ship::{LoadPlanningContext, PlanningTuning, Ship, ShipArchetype, STARTING_CASH};
+use crate::island::Island;
+use crate::ship::{LoadPlanningContext, PlanningTuning, Ship, STARTING_CASH};
+
+mod hud;
+mod ui;
+mod view_model;
 
 pub const WORLD_SIZE: f32 = 5000.0;
 const ISLAND_SPAWN_MARGIN: f32 = 200.0;
@@ -48,6 +52,12 @@ impl FrameTimings {
             total_ms: self.total_ms * scale,
         }
     }
+}
+
+struct IslandBatchResult {
+    ships: Vec<(usize, Ship)>,
+    outbound_recent_departures: Vec<f32>,
+    departure_targets: Vec<usize>,
 }
 
 pub struct World {
@@ -356,13 +366,123 @@ impl World {
         });
     }
 
-    fn process_docked_ships(&mut self) {
-        struct IslandBatchResult {
-            ships: Vec<(usize, Ship)>,
-            outbound_recent_departures: Vec<f32>,
-            departure_targets: Vec<usize>,
+    fn process_island_docked_batch(
+        island_id: usize,
+        island: &mut Island,
+        mut docked_ships: Vec<(usize, Ship)>,
+        mut outbound_recent_departures: Vec<f32>,
+        island_positions: &[Vec2],
+        planning_tuning: &PlanningTuning,
+        tick: u64,
+    ) -> IslandBatchResult {
+        if docked_ships.is_empty() {
+            return IslandBatchResult {
+                ships: docked_ships,
+                outbound_recent_departures,
+                departure_targets: Vec::new(),
+            };
         }
 
+        island.mark_seen(tick);
+        let mut sold_and_empty = vec![false; docked_ships.len()];
+        let mut bankrupt = vec![false; docked_ships.len()];
+
+        for (idx, (_, ship)) in docked_ships.iter_mut().enumerate() {
+            let ship_tuning = ship.effective_tuning(planning_tuning);
+            ship.begin_dock_tick();
+            let load_context = LoadPlanningContext {
+                current_island_id: island_id,
+                island_positions,
+                current_tick: tick,
+                tuning: &ship_tuning,
+                outbound_recent_departures: &outbound_recent_departures,
+            };
+            let settled_any = ship.trade_settle_until_stuck(
+                island_id,
+                island,
+                &load_context,
+                &ship_tuning,
+                MAX_DOCK_SETTLEMENT_STEPS,
+            );
+            if settled_any {
+                sold_and_empty[idx] = ship.has_no_cargo();
+            }
+            if ship.is_bankrupt() {
+                bankrupt[idx] = true;
+            }
+        }
+
+        island.recompute_local_prices(tick);
+
+        for (idx, (_, ship)) in docked_ships.iter_mut().enumerate() {
+            if bankrupt[idx] {
+                continue;
+            }
+            let exclude = ship.just_sold_resource();
+            let ship_tuning = ship.effective_tuning(planning_tuning);
+            let load_context = LoadPlanningContext {
+                current_island_id: island_id,
+                island_positions,
+                current_tick: tick,
+                tuning: &ship_tuning,
+                outbound_recent_departures: &outbound_recent_departures,
+            };
+            let _ = ship.trade_load_if_empty(island, exclude, &load_context);
+        }
+
+        let mut island_ledger_buffer = island.ledger.clone();
+        for (idx, (_, ship)) in docked_ships.iter().enumerate() {
+            if sold_and_empty[idx] || bankrupt[idx] {
+                continue;
+            }
+            ship.contribute_ledger_to_island_buffer(island_id, &mut island_ledger_buffer);
+        }
+        island.ledger = island_ledger_buffer;
+
+        let island_ledger_snapshot = island.ledger.clone();
+        let mut departure_targets = Vec::new();
+
+        for (idx, (_, ship)) in docked_ships.iter_mut().enumerate() {
+            if sold_and_empty[idx] || bankrupt[idx] {
+                continue;
+            }
+            if !ship.has_no_cargo() && !ship.cargo_changed_this_dock() {
+                continue;
+            }
+
+            let ship_tuning = ship.effective_tuning(planning_tuning);
+            ship.sync_ledger_from_snapshot(&island_ledger_snapshot);
+            if let Some(target_island_id) = ship.plan_next_island(
+                island_id,
+                island_positions,
+                tick,
+                &ship_tuning,
+                &outbound_recent_departures,
+            ) {
+                if target_island_id != island_id {
+                    ship.set_target(target_island_id, island_positions[target_island_id]);
+                    departure_targets.push(target_island_id);
+                    if let Some(slot) = outbound_recent_departures.get_mut(target_island_id) {
+                        *slot += 1.0;
+                    }
+                }
+            }
+        }
+
+        let ships = docked_ships
+            .into_iter()
+            .enumerate()
+            .filter_map(|(idx, pair)| (!bankrupt[idx]).then_some(pair))
+            .collect();
+
+        IslandBatchResult {
+            ships,
+            outbound_recent_departures,
+            departure_targets,
+        }
+    }
+
+    fn process_docked_ships(&mut self) {
         let island_count = self.islands.len();
         if island_count == 0 {
             return;
@@ -399,120 +519,16 @@ impl World {
             .zip(outbound_seed.into_par_iter())
             .enumerate()
             .map(
-                |(island_id, ((island, mut docked_ships), mut outbound_recent_departures))| {
-                    if docked_ships.is_empty() {
-                        return IslandBatchResult {
-                            ships: docked_ships,
-                            outbound_recent_departures,
-                            departure_targets: Vec::new(),
-                        };
-                    }
-
-                    island.mark_seen(tick);
-                    let mut sold_and_empty = vec![false; docked_ships.len()];
-                    let mut bankrupt = vec![false; docked_ships.len()];
-
-                    for (idx, (_, ship)) in docked_ships.iter_mut().enumerate() {
-                        let ship_tuning = ship.effective_tuning(&planning_tuning);
-                        ship.begin_dock_tick();
-                        let load_context = LoadPlanningContext {
-                            current_island_id: island_id,
-                            island_positions: &island_positions,
-                            current_tick: tick,
-                            tuning: &ship_tuning,
-                            outbound_recent_departures: &outbound_recent_departures,
-                        };
-                        let settled_any = ship.trade_settle_until_stuck(
-                            island_id,
-                            island,
-                            &load_context,
-                            &ship_tuning,
-                            MAX_DOCK_SETTLEMENT_STEPS,
-                        );
-                        if settled_any {
-                            sold_and_empty[idx] = ship.has_no_cargo();
-                        }
-                        if ship.is_bankrupt() {
-                            bankrupt[idx] = true;
-                        }
-                    }
-
-                    island.recompute_local_prices(tick);
-
-                    for (idx, (_, ship)) in docked_ships.iter_mut().enumerate() {
-                        if bankrupt[idx] {
-                            continue;
-                        }
-                        let exclude = ship.just_sold_resource();
-                        let ship_tuning = ship.effective_tuning(&planning_tuning);
-                        let load_context = LoadPlanningContext {
-                            current_island_id: island_id,
-                            island_positions: &island_positions,
-                            current_tick: tick,
-                            tuning: &ship_tuning,
-                            outbound_recent_departures: &outbound_recent_departures,
-                        };
-                        let _ = ship.trade_load_if_empty(island, exclude, &load_context);
-                    }
-
-                    let mut island_ledger_buffer = island.ledger.clone();
-                    for (idx, (_, ship)) in docked_ships.iter().enumerate() {
-                        if sold_and_empty[idx] || bankrupt[idx] {
-                            continue;
-                        }
-                        ship.contribute_ledger_to_island_buffer(
-                            island_id,
-                            &mut island_ledger_buffer,
-                        );
-                    }
-                    island.ledger = island_ledger_buffer;
-
-                    let island_ledger_snapshot = island.ledger.clone();
-                    let mut departure_targets = Vec::new();
-
-                    for (idx, (_, ship)) in docked_ships.iter_mut().enumerate() {
-                        if sold_and_empty[idx] || bankrupt[idx] {
-                            continue;
-                        }
-                        if !ship.has_no_cargo() && !ship.cargo_changed_this_dock() {
-                            continue;
-                        }
-
-                        let ship_tuning = ship.effective_tuning(&planning_tuning);
-                        ship.sync_ledger_from_snapshot(&island_ledger_snapshot);
-                        if let Some(target_island_id) = ship.plan_next_island(
-                            island_id,
-                            &island_positions,
-                            tick,
-                            &ship_tuning,
-                            &outbound_recent_departures,
-                        ) {
-                            if target_island_id != island_id {
-                                ship.set_target(
-                                    target_island_id,
-                                    island_positions[target_island_id],
-                                );
-                                departure_targets.push(target_island_id);
-                                if let Some(slot) =
-                                    outbound_recent_departures.get_mut(target_island_id)
-                                {
-                                    *slot += 1.0;
-                                }
-                            }
-                        }
-                    }
-
-                    let ships = docked_ships
-                        .into_iter()
-                        .enumerate()
-                        .filter_map(|(idx, pair)| (!bankrupt[idx]).then_some(pair))
-                        .collect();
-
-                    IslandBatchResult {
-                        ships,
+                |(island_id, ((island, docked_ships), outbound_recent_departures))| {
+                    Self::process_island_docked_batch(
+                        island_id,
+                        island,
+                        docked_ships,
                         outbound_recent_departures,
-                        departure_targets,
-                    }
+                        &island_positions,
+                        &planning_tuning,
+                        tick,
+                    )
                 },
             )
             .collect();
@@ -583,470 +599,10 @@ impl World {
         let world_units_per_pixel_x = WORLD_SIZE / screen_width().max(1.0);
         let world_units_per_pixel_y = WORLD_SIZE / screen_height().max(1.0);
         let world_units_per_pixel = world_units_per_pixel_x.max(world_units_per_pixel_y);
-
-        for island in &self.islands {
-            island.draw(world_units_per_pixel);
-        }
-
-        if !self.islands.is_empty() {
-            let selected_island_idx = self.selected_island_index.min(self.islands.len() - 1);
-            self.islands[selected_island_idx].draw_selection_border(world_units_per_pixel);
-        }
-
-        for ship in self.ships.iter().flatten() {
-            ship.draw();
-        }
-
-        if let Some(ship) = self
-            .ships
-            .get(self.selected_ship_index)
-            .and_then(|slot| slot.as_ref())
-        {
-            let ring_radius = 14.0 * world_units_per_pixel;
-            let ring_thickness = 3.0 * world_units_per_pixel;
-            draw_circle_lines(ship.pos.x, ship.pos.y, ring_radius, ring_thickness, RED);
-        }
+        ui::draw_world(self, world_units_per_pixel);
     }
 
     pub fn draw_ui(&self) {
-        let panel_x = 14.0;
-        let panel_y = 14.0;
-        let panel_w = 260.0;
-        let panel_h = 404.0;
-
-        let mut total_inventory = [0.0_f32; RESOURCE_COUNT];
-        let mut total_population = 0.0_f32;
-        let mut total_cash = 0.0_f32;
-        let mut total_infrastructure = 0.0_f32;
-        for island in &self.islands {
-            for (idx, slot) in total_inventory.iter_mut().enumerate() {
-                *slot += island.inventory[idx].max(0.0);
-            }
-            total_population += island.population.max(0.0);
-            total_cash += island.cash.max(0.0);
-            total_infrastructure += island.infrastructure_level.max(0.0);
-        }
-
-        draw_rectangle(
-            panel_x,
-            panel_y,
-            panel_w,
-            panel_h,
-            Color::from_rgba(8, 16, 30, 210),
-        );
-        draw_rectangle_lines(panel_x, panel_y, panel_w, panel_h, 2.0, LIGHTGRAY);
-        draw_text("Legend", panel_x + 10.0, panel_y + 22.0, 24.0, WHITE);
-
-        let entries = [
-            ("Grain", YELLOW),
-            ("Timber", GREEN),
-            ("Iron", DARKGRAY),
-            ("Tools", RED),
-            ("Spices", PURPLE),
-            ("Empty ship", WHITE),
-        ];
-
-        for (i, (label, color)) in entries.iter().enumerate() {
-            let y = panel_y + 42.0 + i as f32 * 16.0;
-            draw_rectangle(panel_x + 10.0, y - 10.0, 10.0, 10.0, *color);
-            draw_rectangle_lines(panel_x + 10.0, y - 10.0, 10.0, 10.0, 1.0, GRAY);
-            if i < RESOURCE_COUNT {
-                let counter = format!("{}: {:.0}", label, total_inventory[i]);
-                draw_text(&counter, panel_x + 28.0, y, 18.0, WHITE);
-            } else {
-                draw_text(label, panel_x + 28.0, y, 18.0, WHITE);
-            }
-        }
-
-        let shape_legend_y = panel_y + 136.0;
-        draw_text("Ship Shapes", panel_x + 10.0, shape_legend_y, 18.0, WHITE);
-
-        let icon_y = shape_legend_y + 14.0;
-        let runner_x = panel_x + 14.0;
-        let freighter_x = panel_x + 92.0;
-        let coaster_x = panel_x + 188.0;
-
-        let runner_top = vec2(runner_x, icon_y - 8.0);
-        let runner_left = vec2(runner_x - 7.0, icon_y + 6.0);
-        let runner_right = vec2(runner_x + 7.0, icon_y + 6.0);
-        draw_triangle(runner_top, runner_left, runner_right, WHITE);
-        draw_triangle_lines(runner_top, runner_left, runner_right, 1.5, LIGHTGRAY);
-        draw_text("Runner", runner_x + 12.0, icon_y + 4.0, 16.0, WHITE);
-
-        draw_rectangle(freighter_x - 7.0, icon_y - 7.0, 14.0, 14.0, WHITE);
-        draw_rectangle_lines(freighter_x - 7.0, icon_y - 7.0, 14.0, 14.0, 1.5, LIGHTGRAY);
-        draw_text("Freighter", freighter_x + 12.0, icon_y + 4.0, 16.0, WHITE);
-
-        draw_circle(coaster_x, icon_y, 7.0, WHITE);
-        draw_circle_lines(coaster_x, icon_y, 7.0, 1.5, LIGHTGRAY);
-        draw_text("Coaster", coaster_x + 12.0, icon_y + 4.0, 16.0, WHITE);
-
-        let avg_infrastructure = if self.islands.is_empty() {
-            0.0
-        } else {
-            total_infrastructure / self.islands.len() as f32
-        };
-        let mut runner_count = 0_usize;
-        let mut freighter_count = 0_usize;
-        let mut coaster_count = 0_usize;
-        for ship in self.ships.iter().flatten() {
-            match ship.archetype() {
-                ShipArchetype::Runner => runner_count += 1,
-                ShipArchetype::Freighter => freighter_count += 1,
-                ShipArchetype::Coaster => coaster_count += 1,
-            }
-        }
-
-        let pop_text = format!("Population: {:.0}", total_population);
-        let cash_text = format!("Cash: {:.0}", total_cash);
-        let infra_text = format!("Industry: {:.2}", avg_infrastructure);
-        let mile_cost_text = format!(
-            "Friction x: {:.2}",
-            self.environmental_tuning().global_friction_mult
-        );
-        let active_ship_count = self.active_ship_count();
-        let ship_count_text = format!("Ships: {}", active_ship_count);
-        let archetype_text = format!(
-            "R/F/C: {}/{}/{}",
-            runner_count, freighter_count, coaster_count
-        );
-        let perf_header_text = "Perf (ms)";
-        let perf_economy_text = format!("Economy: {:.2}", self.frame_timings.economy_ms);
-        let perf_movement_text = format!("Movement: {:.2}", self.frame_timings.movement_ms);
-        let perf_dock_text = format!("Dock: {:.2}", self.frame_timings.dock_ms);
-        let perf_friction_text = format!("Friction: {:.2}", self.frame_timings.friction_ms);
-        let perf_total_text = format!("Total: {:.2}", self.frame_timings.total_ms);
-        draw_text(&pop_text, panel_x + 10.0, panel_y + 172.0, 18.0, WHITE);
-        draw_text(&cash_text, panel_x + 10.0, panel_y + 190.0, 18.0, WHITE);
-        draw_text(&infra_text, panel_x + 10.0, panel_y + 208.0, 18.0, WHITE);
-        draw_text(
-            &mile_cost_text,
-            panel_x + 10.0,
-            panel_y + 226.0,
-            18.0,
-            WHITE,
-        );
-        draw_text(
-            &ship_count_text,
-            panel_x + 10.0,
-            panel_y + 244.0,
-            18.0,
-            WHITE,
-        );
-        draw_text(
-            &archetype_text,
-            panel_x + 10.0,
-            panel_y + 262.0,
-            18.0,
-            WHITE,
-        );
-        draw_text(
-            perf_header_text,
-            panel_x + 10.0,
-            panel_y + 288.0,
-            18.0,
-            WHITE,
-        );
-        draw_text(
-            &perf_economy_text,
-            panel_x + 10.0,
-            panel_y + 306.0,
-            17.0,
-            WHITE,
-        );
-        draw_text(
-            &perf_movement_text,
-            panel_x + 10.0,
-            panel_y + 324.0,
-            17.0,
-            WHITE,
-        );
-        draw_text(
-            &perf_dock_text,
-            panel_x + 10.0,
-            panel_y + 342.0,
-            17.0,
-            WHITE,
-        );
-        draw_text(
-            &perf_friction_text,
-            panel_x + 10.0,
-            panel_y + 360.0,
-            17.0,
-            WHITE,
-        );
-        draw_text(
-            &perf_total_text,
-            panel_x + 10.0,
-            panel_y + 378.0,
-            17.0,
-            WHITE,
-        );
-
-        let inspect_w = 320.0;
-        let inspect_h = 226.0;
-        let inspect_x = (screen_width() - inspect_w - 14.0).max(14.0);
-        let inspect_y = 14.0;
-        draw_rectangle(
-            inspect_x,
-            inspect_y,
-            inspect_w,
-            inspect_h,
-            Color::from_rgba(8, 16, 30, 210),
-        );
-        draw_rectangle_lines(inspect_x, inspect_y, inspect_w, inspect_h, 2.0, LIGHTGRAY);
-        draw_text(
-            "Selected Ship",
-            inspect_x + 10.0,
-            inspect_y + 22.0,
-            24.0,
-            WHITE,
-        );
-
-        if active_ship_count == 0 {
-            draw_text("No ships", inspect_x + 10.0, inspect_y + 48.0, 18.0, WHITE);
-            return;
-        }
-
-        let selected_idx = self.selected_ship_index;
-        let Some(ship) = self.ships.get(selected_idx).and_then(|slot| slot.as_ref()) else {
-            draw_text("No ships", inspect_x + 10.0, inspect_y + 48.0, 18.0, WHITE);
-            return;
-        };
-
-        let archetype_label = match ship.archetype() {
-            ShipArchetype::Runner => "Runner",
-            ShipArchetype::Freighter => "Freighter",
-            ShipArchetype::Coaster => "Coaster",
-        };
-
-        let status_text = if let Some(island_id) = ship.docked_island() {
-            format!("Docked at: {}", island_id)
-        } else if let Some(target_id) = ship.target_island() {
-            format!("En route to: {}", target_id)
-        } else {
-            "Status: Idle".to_string()
-        };
-
-        let dominant_cargo_text = if let Some((resource, value)) = ship.dominant_cargo_by_value() {
-            let label = match resource {
-                Resource::Grain => "Grain",
-                Resource::Timber => "Timber",
-                Resource::Iron => "Iron",
-                Resource::Tools => "Tools",
-                Resource::Spices => "Spices",
-            };
-            format!("Top cargo value: {} ({:.0})", label, value)
-        } else {
-            "Top cargo value: Empty".to_string()
-        };
-
-        let ship_id_text = format!(
-            "Ship ID: {}  Active: {}/{}",
-            selected_idx,
-            active_ship_count,
-            self.ships.len()
-        );
-        let archetype_text = format!("Archetype: {}", archetype_label);
-        let speed_text = format!("Speed: {:.1}", ship.speed());
-        let cargo_text = format!(
-            "Cargo vol: {:.1}/{:.1}",
-            ship.cargo_volume_used(),
-            ship.max_cargo_volume()
-        );
-        let upkeep_text = format!(
-            "Distance/Time cost: {:.2} / {:.4}",
-            ship.cost_per_distance_rate(),
-            ship.maintenance_rate()
-        );
-        let cash_text = format!("Cash: {:.1}", ship.cash);
-        let cargo_mix_text = format!(
-            "Cargo G/T/I/To/S: {:.1}/{:.1}/{:.1}/{:.1}/{:.1}",
-            ship.cargo_amount(Resource::Grain),
-            ship.cargo_amount(Resource::Timber),
-            ship.cargo_amount(Resource::Iron),
-            ship.cargo_amount(Resource::Tools),
-            ship.cargo_amount(Resource::Spices),
-        );
-        let controls_text = "[ / ]: Prev / Next ship";
-
-        draw_text(
-            &ship_id_text,
-            inspect_x + 10.0,
-            inspect_y + 48.0,
-            18.0,
-            WHITE,
-        );
-        draw_text(
-            &archetype_text,
-            inspect_x + 10.0,
-            inspect_y + 66.0,
-            18.0,
-            WHITE,
-        );
-        draw_text(
-            &status_text,
-            inspect_x + 10.0,
-            inspect_y + 84.0,
-            18.0,
-            WHITE,
-        );
-        draw_text(
-            &speed_text,
-            inspect_x + 10.0,
-            inspect_y + 102.0,
-            18.0,
-            WHITE,
-        );
-        draw_text(
-            &cargo_text,
-            inspect_x + 10.0,
-            inspect_y + 120.0,
-            18.0,
-            WHITE,
-        );
-        draw_text(
-            &upkeep_text,
-            inspect_x + 10.0,
-            inspect_y + 138.0,
-            18.0,
-            WHITE,
-        );
-        draw_text(&cash_text, inspect_x + 10.0, inspect_y + 156.0, 18.0, WHITE);
-        draw_text(
-            &cargo_mix_text,
-            inspect_x + 10.0,
-            inspect_y + 174.0,
-            17.0,
-            WHITE,
-        );
-        draw_text(
-            &dominant_cargo_text,
-            inspect_x + 10.0,
-            inspect_y + 192.0,
-            17.0,
-            WHITE,
-        );
-        draw_text(
-            controls_text,
-            inspect_x + 10.0,
-            inspect_y + 214.0,
-            16.0,
-            LIGHTGRAY,
-        );
-
-        let island_hud_y = inspect_y + inspect_h + 12.0;
-        let island_hud_h = 208.0;
-        draw_rectangle(
-            inspect_x,
-            island_hud_y,
-            inspect_w,
-            island_hud_h,
-            Color::from_rgba(8, 16, 30, 210),
-        );
-        draw_rectangle_lines(
-            inspect_x,
-            island_hud_y,
-            inspect_w,
-            island_hud_h,
-            2.0,
-            LIGHTGRAY,
-        );
-        draw_text(
-            "Selected Island",
-            inspect_x + 10.0,
-            island_hud_y + 22.0,
-            24.0,
-            WHITE,
-        );
-
-        if self.islands.is_empty() {
-            draw_text(
-                "No islands",
-                inspect_x + 10.0,
-                island_hud_y + 48.0,
-                18.0,
-                WHITE,
-            );
-            return;
-        }
-
-        let island_idx = self.selected_island_index.min(self.islands.len() - 1);
-        let island = &self.islands[island_idx];
-
-        let island_id_text = format!("Island: {}/{}", island_idx + 1, self.islands.len());
-        let island_pop_text = format!("Population: {:.0}", island.population.max(0.0));
-        let island_cash_text = format!("Cash: {:.0}", island.cash.max(0.0));
-        let island_infra_text = format!(
-            "Infrastructure: {:.2}",
-            island.infrastructure_level.max(0.0)
-        );
-        let inv_text = format!(
-            "Inv G/T/I/To/S: {:.0}/{:.0}/{:.0}/{:.0}/{:.0}",
-            island.inventory[Resource::Grain.idx()].max(0.0),
-            island.inventory[Resource::Timber.idx()].max(0.0),
-            island.inventory[Resource::Iron.idx()].max(0.0),
-            island.inventory[Resource::Tools.idx()].max(0.0),
-            island.inventory[Resource::Spices.idx()].max(0.0)
-        );
-        let price_text = format!(
-            "Price G/T/I/To/S: {:.0}/{:.0}/{:.0}/{:.0}/{:.0}",
-            island.local_prices[Resource::Grain.idx()].max(0.0),
-            island.local_prices[Resource::Timber.idx()].max(0.0),
-            island.local_prices[Resource::Iron.idx()].max(0.0),
-            island.local_prices[Resource::Tools.idx()].max(0.0),
-            island.local_prices[Resource::Spices.idx()].max(0.0)
-        );
-        let island_controls_text = "{ / }: Prev / Next island";
-
-        draw_text(
-            &island_id_text,
-            inspect_x + 10.0,
-            island_hud_y + 48.0,
-            18.0,
-            WHITE,
-        );
-        draw_text(
-            &island_pop_text,
-            inspect_x + 10.0,
-            island_hud_y + 66.0,
-            18.0,
-            WHITE,
-        );
-        draw_text(
-            &island_cash_text,
-            inspect_x + 10.0,
-            island_hud_y + 84.0,
-            18.0,
-            WHITE,
-        );
-        draw_text(
-            &island_infra_text,
-            inspect_x + 10.0,
-            island_hud_y + 102.0,
-            18.0,
-            WHITE,
-        );
-        draw_text(
-            &inv_text,
-            inspect_x + 10.0,
-            island_hud_y + 128.0,
-            17.0,
-            WHITE,
-        );
-        draw_text(
-            &price_text,
-            inspect_x + 10.0,
-            island_hud_y + 154.0,
-            17.0,
-            WHITE,
-        );
-        draw_text(
-            island_controls_text,
-            inspect_x + 10.0,
-            island_hud_y + 196.0,
-            16.0,
-            LIGHTGRAY,
-        );
+        hud::draw_ui(self);
     }
 }
