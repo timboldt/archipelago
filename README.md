@@ -73,12 +73,12 @@ cargo +nightly fmt
 - **Survival safety net:** If an island falls to minimum population while starving, it automatically re-prioritizes grain extraction to restart its local economy.
 - **Tools as multiplier:** Tool stock boosts raw extraction productivity up to a cap, creating industrial demand for tools beyond pure arbitrage.
 - **Island capital:** Islands now carry finite `cash`; they can only buy from ships up to affordability, and earn cash when ships purchase local inventory.
-- **Liquidity stabilization:** Islands also generate modest endogenous cash from population activity and industrial throughput to avoid system-wide insolvency cascades.
-- **Operating costs:** Islands pay ongoing population/infrastructure upkeep, providing a continuous cash sink that limits runaway monetary growth.
-- **Capital sink:** Cash-rich islands reinvest excess capital into infrastructure growth with a lower trigger threshold and higher conversion efficiency, feeding industrial capacity sooner.
-- **Transport cost:** Cargo accrues freight cost while traveling; planning accounts for projected freight and realized P&L applies the full accrued freight deduction.
-- **Maritime friction:** Ships now pay (1) time-based labor/provisions each tick and (2) distance-based rigging/repair wear while sailing, and can go negative cash in transit.
-- **Docking sink:** Time-based labor/provisions burn is higher while docked (port fees/taxes), so waiting in harbor has explicit economic drag.
+- **Closed-loop island cash:** Islands no longer mint/burn cash from endogenous production/upkeep terms; trade and dock settlements are the primary cash-flow paths.
+- **Infrastructure credit loop:** Islands accrue internal infrastructure credit (separate from cash) and spend that credit on infrastructure growth.
+- **Transport cost:** Planning continues to price distance/time friction into expected utility so route choice remains cost-aware.
+- **Maritime friction:** Ships accrue (1) time-based labor/provisions and (2) distance-based repair wear as dock-payable debt.
+- **Dock settlement:** After selling/bartering cargo, ships settle accrued labor/repair debt to the island before loading the next leg.
+- **Dock-only bankruptcy:** Bankruptcy culling is resolved at dock; a bankrupt ship transfers its remaining cash to the docked island before removal.
 - **Provision scarcity ceiling:** Friction self-adjusts with fleet crowding (ships vs target ships per island), creating a self-limiting competitive overhead as population grows.
 - **Pair-based load selection:** Empty ships score full `(local resource -> destination island)` pairs and buy the resource from the best pair, rather than picking the cheapest local good first.
 - **Anti-roundtrip guard:** A ship will not immediately reload the same resource it just sold in the same dock cycle.
@@ -104,8 +104,9 @@ cargo +nightly fmt
 - **Wealth tax / upkeep:** Every tick, each ship now pays trait-derived labor/provisions burn from cash (scaled by fleet crowding), and sailing applies additional distance wear, so persistently unprofitable traders eventually fail the scuttle threshold and are replaced by fitter descendants without collapsing the whole fleet.
 - **Bankruptcy failure:** If a ship arrives deeply insolvent and cannot recover via dock settlement (sell/barter phase), it is culled immediately (using a negative-cash floor rather than zero).
 - **Lifecycle selection:** Fleet composition evolves over time: low-cash ships are retired, while wealthy ships can split into daughter ships with small Gaussian strategy mutations (not restricted to docked-only parents).
-- **Scuttle semantics:** Scuttled ships are marked as empty slots (`None`) instead of compacting the ship array, preserving stable IDs for UI selection and per-tick routing bookkeeping.
+- **Scuttle semantics:** Scuttled ships are marked as empty slots (`None`) instead of compacting the ship array, and their remaining cash is applied to their last docked island.
 - **Birth throttling:** Daughter creation now pays a birth fee and uses a pressure-scaled threshold tied to effective global friction and fleet saturation (ships per island), curbing runaway fleet growth.
+- **Birth fee routing:** Daughter birth fees are credited to the parent ship's docked island instead of being removed from the economy.
 - **Trader phenotypes:** Mutated strategy genes include confidence-decay scaling and risk tolerance.
 - **Derived ship costs:** Trade planning and settlement derive `cost_per_distance` and `cost_per_time` from ship traits (speed/distance-cost rate and maintenance/hull profile), rather than independent tuning dials.
 - **Dock cadence:** Ships that sell on a tick stay docked for at least that tick (no immediate departure while empty), then can reload and depart on a following tick.

@@ -12,6 +12,8 @@ const INITIAL_CASH_MIN: f32 = 900.0;
 const INITIAL_CASH_MAX: f32 = 2600.0;
 const INITIAL_INFRASTRUCTURE_MIN: f32 = 0.7;
 const INITIAL_INFRASTRUCTURE_MAX: f32 = 1.5;
+const INITIAL_INFRA_CREDIT_MIN: f32 = 900.0;
+const INITIAL_INFRA_CREDIT_MAX: f32 = 2600.0;
 const MIN_POPULATION: f32 = 8.0;
 const POPULATION_GROWTH_RATE: f32 = 0.07;
 const POPULATION_STARVATION_RATE: f32 = 0.08;
@@ -28,10 +30,6 @@ const TOOL_OUTPUT_PER_BATCH: f32 = 2.2;
 const TARGET_TOOLS_PER_1K_POP: f32 = 50.0;
 const TOOL_FABRICATOR_ADAPTIVE_GAIN: f32 = 0.7;
 const TOOL_FABRICATOR_ADAPTIVE_CAP: f32 = 1.8;
-const PER_CAPITA_CASH_GENERATION: f32 = 0.05;
-const INDUSTRIAL_CASH_GENERATION: f32 = 0.30;
-const POPULATION_CASH_UPKEEP: f32 = 0.035;
-const INFRASTRUCTURE_CASH_UPKEEP: f32 = 0.55;
 const TOOLS_CONSUMPTION_SCALE: f32 = 0.04;
 const INDUSTRIAL_LABOR_SCALING: f32 = 0.012;
 const SCARCITY_LOG_SCALE: f32 = 2.4;
@@ -42,6 +40,8 @@ const FOCUS_PRODUCTION_BOOST: f32 = 1.9;
 const NON_FOCUS_PRODUCTION_SCALE: f32 = 0.78;
 const TOOLS_PRODUCTIVITY_CAP: f32 = 2.0;
 const TOOLS_PRODUCTIVITY_SCALE: f32 = 0.22;
+const PER_CAPITA_INFRA_CREDIT_GENERATION: f32 = 0.05;
+const INDUSTRIAL_INFRA_CREDIT_GENERATION: f32 = 0.30;
 const CAPITAL_INVESTMENT_THRESHOLD: f32 = 1600.0;
 const CAPITAL_INVESTMENT_RATE: f32 = 0.06;
 const INFRASTRUCTURE_INVESTMENT_EFFICIENCY: f32 = 0.00032;
@@ -108,6 +108,7 @@ pub struct Island {
     pub population: f32,
     pub cash: f32,
     pub infrastructure_level: f32,
+    infra_credit: f32,
     pub local_prices: [f32; RESOURCE_COUNT],
     pub ledger: PriceLedger,
 }
@@ -194,6 +195,7 @@ impl Island {
             cash: rng.gen_range(INITIAL_CASH_MIN..INITIAL_CASH_MAX),
             infrastructure_level: rng
                 .gen_range(INITIAL_INFRASTRUCTURE_MIN..INITIAL_INFRASTRUCTURE_MAX),
+            infra_credit: rng.gen_range(INITIAL_INFRA_CREDIT_MIN..INITIAL_INFRA_CREDIT_MAX),
             local_prices: [0.0; RESOURCE_COUNT],
             ledger: vec![
                 PriceEntry {
@@ -288,20 +290,15 @@ impl Island {
             self.inventory[tools_idx] += feasible_batch * TOOL_OUTPUT_PER_BATCH;
         }
 
-        let local_economic_income = (self.population * PER_CAPITA_CASH_GENERATION
-            + feasible_batch * INDUSTRIAL_CASH_GENERATION)
+        let infra_credit_income = (self.population * PER_CAPITA_INFRA_CREDIT_GENERATION
+            + feasible_batch * INDUSTRIAL_INFRA_CREDIT_GENERATION)
             * dt;
-        self.cash += local_economic_income.max(0.0);
+        self.infra_credit += infra_credit_income.max(0.0);
 
-        let operating_cost = (self.population * POPULATION_CASH_UPKEEP
-            + self.infrastructure_level * INFRASTRUCTURE_CASH_UPKEEP)
-            * dt;
-        self.cash = (self.cash - operating_cost).max(0.0);
-
-        if self.cash > CAPITAL_INVESTMENT_THRESHOLD {
-            let excess_capital = self.cash - CAPITAL_INVESTMENT_THRESHOLD;
-            let investment = (excess_capital * CAPITAL_INVESTMENT_RATE * dt).min(self.cash);
-            self.cash -= investment;
+        if self.infra_credit > CAPITAL_INVESTMENT_THRESHOLD {
+            let excess_credit = self.infra_credit - CAPITAL_INVESTMENT_THRESHOLD;
+            let investment = (excess_credit * CAPITAL_INVESTMENT_RATE * dt).min(self.infra_credit);
+            self.infra_credit -= investment;
             self.infrastructure_level = (self.infrastructure_level
                 + investment * INFRASTRUCTURE_INVESTMENT_EFFICIENCY)
                 .min(MAX_INFRASTRUCTURE_LEVEL);
@@ -397,6 +394,16 @@ impl Island {
         let total_cost = filled * self.ask_price(resource, market_spread);
         self.cash += total_cost;
         (filled, total_cost)
+    }
+
+    pub fn accept_service_payment(&mut self, repair_amount: f32, labor_amount: f32) -> f32 {
+        let paid = repair_amount.max(0.0) + labor_amount.max(0.0);
+        self.cash += paid;
+        paid
+    }
+
+    pub fn apply_ship_bankruptcy_settlement(&mut self, settlement: f32) {
+        self.cash += settlement;
     }
 
     pub fn bid_price(&self, resource: Resource, market_spread: f32) -> f32 {

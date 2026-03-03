@@ -136,8 +136,11 @@ pub struct Ship {
     maintenance_rate: f32,
     target_island_id: Option<usize>,
     docked_at: Option<usize>,
+    last_docked_island_id: Option<usize>,
     cargo: Inventory,
     pub cash: f32,
+    labor_debt: f32,
+    repair_debt: f32,
     pub ledger: PriceLedger,
     route_memory: Vec<f32>,
     purchase_price_by_resource: [f32; RESOURCE_COUNT],
@@ -167,8 +170,11 @@ impl Ship {
             maintenance_rate: 0.0,
             target_island_id: Some(docked_island_id),
             docked_at: Some(docked_island_id),
+            last_docked_island_id: Some(docked_island_id),
             cargo: [0.0; RESOURCE_COUNT],
             cash: STARTING_CASH,
+            labor_debt: 0.0,
+            repair_debt: 0.0,
             ledger: vec![
                 PriceEntry {
                     prices: [0.0; RESOURCE_COUNT],
@@ -428,6 +434,10 @@ impl Ship {
         self.docked_at
     }
 
+    pub fn last_docked_island(&self) -> Option<usize> {
+        self.docked_at.or(self.last_docked_island_id)
+    }
+
     pub fn estimated_net_worth(&self) -> f32 {
         let mut net_worth = self.cash.max(0.0);
         for resource in Resource::iter() {
@@ -445,7 +455,7 @@ impl Ship {
                 (cargo_book_price * bid_multiplier(DEFAULT_MARKET_SPREAD) * amount).max(0.0);
             net_worth += conservative_cargo_value;
         }
-        net_worth
+        net_worth - self.total_service_debt()
     }
 
     pub fn apply_maritime_friction(&mut self, dt: f32, global_friction_mult: f32) {
@@ -462,12 +472,13 @@ impl Ship {
             * global_friction_mult
             * wear_multiplier;
 
-        self.cash -= labor_and_provisions + rigging_and_repairs;
+        self.labor_debt += labor_and_provisions.max(0.0);
+        self.repair_debt += rigging_and_repairs.max(0.0);
         self.last_step_distance = 0.0;
     }
 
     pub fn is_bankrupt(&self) -> bool {
-        self.cash < BANKRUPTCY_CASH_FLOOR
+        self.cash - self.total_service_debt() < BANKRUPTCY_CASH_FLOOR
     }
 
     pub fn archetype(&self) -> ShipArchetype {
@@ -618,6 +629,32 @@ impl Ship {
         }
     }
 
+    fn total_service_debt(&self) -> f32 {
+        self.labor_debt.max(0.0) + self.repair_debt.max(0.0)
+    }
+
+    pub fn settle_service_debt(&mut self, island: &mut Island) -> f32 {
+        let total_debt = self.total_service_debt();
+        if total_debt <= 0.0 || self.cash <= 0.0 {
+            return 0.0;
+        }
+
+        let payment = self.cash.min(total_debt);
+        let repair_share = (self.repair_debt.max(0.0) / total_debt).clamp(0.0, 1.0);
+        let repair_paid = payment * repair_share;
+        let labor_paid = payment - repair_paid;
+
+        self.repair_debt = (self.repair_debt - repair_paid).max(0.0);
+        self.labor_debt = (self.labor_debt - labor_paid).max(0.0);
+        self.cash -= payment;
+        island.accept_service_payment(repair_paid, labor_paid);
+        payment
+    }
+
+    pub fn removal_cash_settlement(&self) -> f32 {
+        self.cash.max(0.0)
+    }
+
     pub fn trade_unload_if_carrying(
         &mut self,
         island_id: usize,
@@ -648,12 +685,7 @@ impl Ship {
             return self.last_dock_action;
         }
 
-        let sold_volume = sold_amount * resource.volume_per_unit();
-        let raw_freight_cost = self.cargo_distance_accrued
-            * sold_volume
-            * self.cost_per_distance()
-            * tuning.global_friction_mult;
-        let net_revenue = gross_revenue - raw_freight_cost;
+        let net_revenue = gross_revenue;
         self.cash += net_revenue;
 
         let book_price = self.purchase_price_by_resource[resource_idx];
@@ -1450,6 +1482,7 @@ impl Ship {
         self.last_step_distance = 0.0;
         if dist < 1.0 {
             self.docked_at = self.target_island_id;
+            self.last_docked_island_id = self.docked_at;
             return self.docked_at;
         }
         let step = self.speed * dt;
@@ -1460,6 +1493,7 @@ impl Ship {
             }
             self.pos = self.target;
             self.docked_at = self.target_island_id;
+            self.last_docked_island_id = self.docked_at;
             self.docked_at
         } else {
             if !self.has_no_cargo() {

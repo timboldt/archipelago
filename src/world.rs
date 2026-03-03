@@ -319,12 +319,12 @@ impl World {
         current_frame_timings.movement_ms = phase_start.elapsed().as_secs_f32() * 1000.0;
 
         let phase_start = Instant::now();
-        self.process_docked_ships();
-        current_frame_timings.dock_ms = phase_start.elapsed().as_secs_f32() * 1000.0;
-
-        let phase_start = Instant::now();
         self.apply_maritime_friction(dt);
         current_frame_timings.friction_ms = phase_start.elapsed().as_secs_f32() * 1000.0;
+
+        let phase_start = Instant::now();
+        self.process_docked_ships();
+        current_frame_timings.dock_ms = phase_start.elapsed().as_secs_f32() * 1000.0;
 
         self.route_history_cursor = (self.route_history_cursor + 1) % ROUTE_HISTORY_WINDOW_TICKS;
         if self.tick.is_multiple_of(LIFECYCLE_CHECK_INTERVAL_TICKS) {
@@ -404,6 +404,8 @@ impl World {
         let mut rng = ::rand::thread_rng();
 
         let mut daughters: Vec<Option<Ship>> = Vec::new();
+        let mut island_birth_fee_credits = vec![0.0_f32; self.islands.len()];
+        let mut island_scuttle_settlements = vec![0.0_f32; self.islands.len()];
 
         for slot in &mut self.ships {
             let Some(ship) = slot.as_mut() else {
@@ -411,6 +413,11 @@ impl World {
             };
 
             if ship.estimated_net_worth() < scuttle_threshold {
+                if let Some(island_id) = ship.last_docked_island() {
+                    if let Some(settlement) = island_scuttle_settlements.get_mut(island_id) {
+                        *settlement += ship.removal_cash_settlement();
+                    }
+                }
                 *slot = None;
                 continue;
             }
@@ -418,8 +425,24 @@ impl World {
             if ship.cash >= birth_threshold + birth_fee {
                 if let Some(daughter) = ship.spawn_daughter(MUTATION_STRENGTH, &mut rng) {
                     ship.cash -= birth_fee;
+                    if let Some(island_id) = ship.docked_island() {
+                        if let Some(credit) = island_birth_fee_credits.get_mut(island_id) {
+                            *credit += birth_fee;
+                        }
+                    }
                     daughters.push(Some(daughter));
                 }
+            }
+        }
+
+        for (island_id, credit) in island_birth_fee_credits.into_iter().enumerate() {
+            if credit > 0.0 {
+                self.islands[island_id].cash += credit;
+            }
+        }
+        for (island_id, settlement) in island_scuttle_settlements.into_iter().enumerate() {
+            if settlement != 0.0 {
+                self.islands[island_id].cash += settlement;
             }
         }
 

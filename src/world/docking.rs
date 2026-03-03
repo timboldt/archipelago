@@ -58,10 +58,12 @@ impl World {
                 &ship_tuning,
                 MAX_DOCK_SETTLEMENT_STEPS,
             );
+            let _ = ship.settle_service_debt(island);
             if settled_any {
                 sold_and_empty[idx] = ship.has_no_cargo();
             }
             if ship.is_bankrupt() {
+                island.apply_ship_bankruptcy_settlement(ship.removal_cash_settlement());
                 bankrupt[idx] = true;
             }
         }
