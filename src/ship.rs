@@ -587,7 +587,7 @@ impl Ship {
 
         let (sold_amount, gross_revenue) =
             island.sell_to_island(resource, carrying_amount, tuning.market_spread);
-        if sold_amount <= 0.0 {
+        if sold_amount <= 0.0 || gross_revenue <= 0.0 {
             return self.last_dock_action;
         }
 

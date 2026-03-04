@@ -56,34 +56,27 @@ impl World {
             let mut sold_and_empty = vec![false; ship_indices.len()];
             let mut bankrupt_local = vec![false; ship_indices.len()];
 
-            // Pass 1: unconditional unload → settle service debt → load.
+            // Pass 1: all transactions unconditionally, then settle debts at the end.
             for (local_idx, &ship_idx) in ship_indices.iter().enumerate() {
                 let ship = &mut self.ships[ship_idx];
                 let ship_tuning = ship.effective_tuning(&planning_tuning);
                 ship.begin_dock_tick();
 
-                // Unload: goods always transfer; island pays what it has (see sell_to_island).
+                // 1. Unload — island always receives goods (cash may go negative).
                 let settled_any = ship.trade_settle_until_stuck(
                     island_id,
                     island,
                     &ship_tuning,
                     MAX_DOCK_SETTLEMENT_STEPS,
                 );
-                let _ = ship.settle_service_debt(island);
-
                 if settled_any {
                     sold_and_empty[local_idx] = ship.has_no_cargo();
                 }
 
-                if ship.is_bankrupt() {
-                    // Scuttle: island keeps the unloaded goods for free.
-                    island.apply_ship_bankruptcy_settlement(ship.removal_cash_settlement());
-                    bankrupt_local[local_idx] = true;
-                    bankrupt_indices.push(ship_idx);
-                    continue;
-                }
+                // 2. Service fees.
+                let _ = ship.settle_service_debt(island);
 
-                // Load phase.
+                // 3. Load — ship buys what it can afford.
                 let outbound_recent_departures = self.recent_route_departures[island_id].clone();
                 let exclude = ship.just_sold_resource();
                 let load_context = LoadPlanningContext {
@@ -97,11 +90,19 @@ impl World {
                 if ship.cargo_changed_this_dock() {
                     let _ = ship.pay_dynamic_docking_tax(island);
                 }
+
+                // 4. Settlement: if island went negative, ship covers the deficit.
+                if island.cash < 0.0 {
+                    let deficit = (-island.cash).min(ship.cash.max(0.0));
+                    ship.cash -= deficit;
+                    island.cash += deficit;
+                }
+
+                // 5. If ship is now bankrupt, scuttle it — island keeps everything.
                 if ship.is_bankrupt() {
                     island.apply_ship_bankruptcy_settlement(ship.removal_cash_settlement());
                     bankrupt_local[local_idx] = true;
                     bankrupt_indices.push(ship_idx);
-                    continue;
                 }
             }
 

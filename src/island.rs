@@ -416,13 +416,12 @@ impl Island {
             return (0.0, 0.0);
         }
 
-        // Goods always transfer. Island pays what it has (floored at 0);
-        // ship accepts partial payment if the island is cash-poor.
-        let full_value = amount * price;
-        let payment = full_value.min(self.cash.max(0.0));
+        // Island always accepts goods at bid price; cash may go negative.
+        // The ship settles any resulting deficit at the end of the dock sequence.
+        let total_value = amount * price;
         self.inventory[index] += amount;
-        self.cash -= payment;
-        (amount, payment)
+        self.cash -= total_value;
+        (amount, total_value)
     }
 
     /// Sells `resource` to a ship at ask price, limited by island inventory.
@@ -507,19 +506,19 @@ mod tests {
         island.cash = 10.0;
         island.local_prices[Resource::Tools.idx()] = 120.0;
         let starting_tools = island.inventory[Resource::Tools.idx()];
+        let expected_price = 120.0 * (1.0 - 0.1 * 0.5);
 
-        // Island has only 10 cash but ship sells 1.0 unit — goods always transfer.
+        // Island always accepts goods even when cash-poor; cash goes negative.
+        // The docking sequence settles any resulting deficit after all transactions.
         let (filled, paid) = island.sell_to_island(Resource::Tools, 1.0, 0.1);
 
-        // Full amount of goods transferred.
         approx_eq(filled, 1.0);
+        approx_eq(paid, expected_price);
         approx_eq(
             island.inventory[Resource::Tools.idx()],
             starting_tools + 1.0,
         );
-        // Island paid only what it had; cash floored at 0.
-        approx_eq(paid, 10.0);
-        approx_eq(island.cash, 0.0);
+        assert!(island.cash < 0.0);
     }
 
     #[test]
