@@ -74,7 +74,7 @@ pub(super) fn hud_summary(world: &World) -> HudSummary {
     let mut clipper_count = 0_usize;
     let mut freighter_count = 0_usize;
     let mut shorthaul_count = 0_usize;
-    for ship in world.ships.iter().flatten() {
+    for ship in world.ships.iter() {
         match ship.archetype() {
             ShipArchetype::Clipper => clipper_count += 1,
             ShipArchetype::Freighter => freighter_count += 1,
@@ -103,7 +103,7 @@ pub(super) fn hud_summary(world: &World) -> HudSummary {
 /// Builds selected-ship inspector content (or an empty-state payload).
 pub(super) fn ship_inspector_view(world: &World, active_ship_count: usize) -> ShipInspectorView {
     let selected_idx = world.selected_ship_index;
-    let Some(ship) = world.ships.get(selected_idx).and_then(|slot| slot.as_ref()) else {
+    let Some(ship) = world.ships.get(selected_idx) else {
         return ShipInspectorView {
             has_ship: false,
             ship_id_text: String::new(),

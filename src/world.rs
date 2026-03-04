@@ -71,7 +71,7 @@ impl FrameTimings {
 /// Central simulation container for islands, ships, selection state, and timing.
 pub struct World {
     pub islands: Vec<Island>,
-    pub ships: Vec<Option<Ship>>,
+    pub ships: Vec<Ship>,
     selected_ship_index: usize,
     selected_island_index: usize,
     recent_route_departures: Vec<Vec<f32>>,
@@ -133,7 +133,7 @@ impl World {
 
         // Ships start docked at a random island with randomized speeds and
         // noisy/stale beliefs about all islands.
-        let ships: Vec<Option<Ship>> = (0..num_ships)
+        let ships: Vec<Ship> = (0..num_ships)
             .map(|i| {
                 let speed = rng.gen_range(200.0_f32..500.0);
                 let start_island_id = i % islands.len();
@@ -149,7 +149,7 @@ impl World {
                     start_island_id,
                     &mut rng,
                 );
-                Some(ship)
+                ship
             })
             .collect();
 
@@ -224,11 +224,7 @@ impl World {
             active_ships
         ));
 
-        if let Some(ship) = self
-            .ships
-            .get(self.selected_ship_index)
-            .and_then(|slot| slot.as_ref())
-        {
+        if let Some(ship) = self.ships.get(self.selected_ship_index) {
             out.push_str("selected_ship\n");
             out.push_str(&format!(
                 "  slot={}\n  cash={:.2}\n  cargo_volume={:.2}/{:.2}\n  docked_at={:?}\n  target={:?}\n\n",
@@ -264,11 +260,12 @@ impl World {
         out.push_str("docked_empty_ships_with_local_buy_capacity\n");
         let island_positions: Vec<Vec2> = self.islands.iter().map(|island| island.pos).collect();
         let base_tuning = self.environmental_tuning();
-        for (ship_slot, ship) in self.ships.iter().enumerate().filter_map(|(i, slot)| {
-            slot.as_ref()
-                .filter(|ship| ship.docked_island().is_some() && ship.has_no_cargo())
-                .map(|ship| (i, ship))
-        }) {
+        for (ship_slot, ship) in self
+            .ships
+            .iter()
+            .enumerate()
+            .filter(|(_, ship)| ship.docked_island().is_some() && ship.has_no_cargo())
+        {
             let Some(island_id) = ship.docked_island() else {
                 continue;
             };
@@ -352,48 +349,33 @@ impl World {
         tuning
     }
 
-    /// Returns the number of non-empty ship slots.
+    /// Returns the number of ships in the fleet.
     fn active_ship_count(&self) -> usize {
-        self.ships.iter().filter(|ship| ship.is_some()).count()
+        self.ships.len()
     }
 
-    /// Returns the first active ship slot index, if any.
-    fn first_active_ship_index(&self) -> Option<usize> {
-        self.ships.iter().position(|ship| ship.is_some())
-    }
-
-    /// Finds the next active ship index from `from`, wrapping around the fleet.
+    /// Finds the next ship index from `from`, wrapping around the fleet.
     fn find_next_active_ship_index(&self, from: usize, forward: bool) -> Option<usize> {
         if self.ships.is_empty() {
             return None;
         }
-
         let len = self.ships.len();
-        let mut idx = from % len;
-        for _ in 0..len {
-            idx = if forward {
-                (idx + 1) % len
-            } else {
-                (idx + len - 1) % len
-            };
-            if self.ships[idx].is_some() {
-                return Some(idx);
-            }
-        }
-        None
+        let idx = from % len;
+        Some(if forward {
+            (idx + 1) % len
+        } else {
+            (idx + len - 1) % len
+        })
     }
 
-    /// Repairs the selected ship index after culls/spawns/slot invalidation.
+    /// Repairs the selected ship index after culls/spawns.
     fn ensure_selected_ship_valid(&mut self) {
         if self.ships.is_empty() {
             self.selected_ship_index = 0;
             return;
         }
-
-        if self.selected_ship_index >= self.ships.len()
-            || self.ships[self.selected_ship_index].is_none()
-        {
-            self.selected_ship_index = self.first_active_ship_index().unwrap_or(0);
+        if self.selected_ship_index >= self.ships.len() {
+            self.selected_ship_index = self.ships.len() - 1;
         }
     }
 
@@ -518,20 +500,16 @@ impl World {
 
     /// Advances ship movement in parallel.
     fn move_ships(&mut self, dt: f32) {
-        self.ships.par_iter_mut().for_each(|slot| {
-            if let Some(ship) = slot.as_mut() {
-                let _ = ship.update(dt);
-            }
+        self.ships.par_iter_mut().for_each(|ship| {
+            let _ = ship.update(dt);
         });
     }
 
     /// Applies continuous maritime operating friction to ships in parallel.
     fn apply_maritime_friction(&mut self, dt: f32) {
         let global_friction_mult = self.environmental_tuning().global_friction_mult;
-        self.ships.par_iter_mut().for_each(|slot| {
-            if let Some(ship) = slot.as_mut() {
-                ship.apply_maritime_friction(dt, global_friction_mult);
-            }
+        self.ships.par_iter_mut().for_each(|ship| {
+            ship.apply_maritime_friction(dt, global_friction_mult);
         });
     }
 
@@ -550,23 +528,18 @@ impl World {
         let birth_fee = STARTING_CASH * BIRTH_FEE_MULTIPLIER * cost_factor * fleet_pressure;
         let mut rng = ::rand::thread_rng();
 
-        let mut daughters: Vec<Option<Ship>> = Vec::new();
+        let mut daughters: Vec<Ship> = Vec::new();
         let mut island_birth_fee_credits = vec![0.0_f32; self.islands.len()];
         let mut island_scuttle_settlements = vec![0.0_f32; self.islands.len()];
 
-        for slot in &mut self.ships {
-            let Some(ship) = slot.as_mut() else {
-                continue;
-            };
-
+        self.ships.retain_mut(|ship| {
             if ship.estimated_net_worth() < scuttle_threshold {
                 if let Some(island_id) = ship.last_docked_island() {
                     if let Some(settlement) = island_scuttle_settlements.get_mut(island_id) {
                         *settlement += ship.removal_cash_settlement();
                     }
                 }
-                *slot = None;
-                continue;
+                return false;
             }
 
             if ship.cash >= birth_threshold + birth_fee {
@@ -577,10 +550,12 @@ impl World {
                             *credit += birth_fee;
                         }
                     }
-                    daughters.push(Some(daughter));
+                    daughters.push(daughter);
                 }
             }
-        }
+
+            true
+        });
 
         for (island_id, credit) in island_birth_fee_credits.into_iter().enumerate() {
             if credit > 0.0 {
