@@ -56,11 +56,13 @@ impl World {
             let mut sold_and_empty = vec![false; ship_indices.len()];
             let mut bankrupt_local = vec![false; ship_indices.len()];
 
-            // Pass 1: sell / settle service debt.
+            // Pass 1: unconditional unload → settle service debt → load.
             for (local_idx, &ship_idx) in ship_indices.iter().enumerate() {
                 let ship = &mut self.ships[ship_idx];
                 let ship_tuning = ship.effective_tuning(&planning_tuning);
                 ship.begin_dock_tick();
+
+                // Unload: goods always transfer; island pays what it has (see sell_to_island).
                 let settled_any = ship.trade_settle_until_stuck(
                     island_id,
                     island,
@@ -68,27 +70,22 @@ impl World {
                     MAX_DOCK_SETTLEMENT_STEPS,
                 );
                 let _ = ship.settle_service_debt(island);
+
                 if settled_any {
                     sold_and_empty[local_idx] = ship.has_no_cargo();
                 }
+
                 if ship.is_bankrupt() {
+                    // Scuttle: island keeps the unloaded goods for free.
                     island.apply_ship_bankruptcy_settlement(ship.removal_cash_settlement());
                     bankrupt_local[local_idx] = true;
                     bankrupt_indices.push(ship_idx);
-                }
-            }
-
-            island.recompute_local_prices(tick);
-
-            // Pass 2: load planning.
-            let outbound_recent_departures = self.recent_route_departures[island_id].clone();
-            for (local_idx, &ship_idx) in ship_indices.iter().enumerate() {
-                if bankrupt_local[local_idx] {
                     continue;
                 }
-                let ship = &mut self.ships[ship_idx];
+
+                // Load phase.
+                let outbound_recent_departures = self.recent_route_departures[island_id].clone();
                 let exclude = ship.just_sold_resource();
-                let ship_tuning = ship.effective_tuning(&planning_tuning);
                 let load_context = LoadPlanningContext {
                     current_island_id: island_id,
                     island_positions: &island_positions,
@@ -104,10 +101,14 @@ impl World {
                     island.apply_ship_bankruptcy_settlement(ship.removal_cash_settlement());
                     bankrupt_local[local_idx] = true;
                     bankrupt_indices.push(ship_idx);
+                    continue;
                 }
             }
 
-            // Pass 3: ledger merge — accumulate ship knowledge into island buffer.
+            island.recompute_local_prices(tick);
+
+            // Pass 2 (ledger merge): accumulate ship knowledge into island buffer.
+            // Information always propagates, even for ships that couldn't trade.
             let mut island_ledger_buffer = island.ledger.clone();
             for (local_idx, &ship_idx) in ship_indices.iter().enumerate() {
                 if sold_and_empty[local_idx] || bankrupt_local[local_idx] {
@@ -118,7 +119,7 @@ impl World {
             }
             island.ledger = island_ledger_buffer;
 
-            // Pass 4: departure planning — sync each ship from the merged ledger.
+            // Pass 3: departure planning — sync each ship from the merged ledger.
             let island_ledger_snapshot = island.ledger.clone();
             let mut outbound_for_island = self.recent_route_departures[island_id].clone();
 

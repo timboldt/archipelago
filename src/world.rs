@@ -515,10 +515,10 @@ impl World {
 
     /// Applies periodic selection pressure: cull weak ships and spawn daughters.
     fn evolve_fleet(&mut self) {
-        let scuttle_threshold = STARTING_CASH * SCUTTLE_THRESHOLD_MULTIPLIER;
         let island_count = self.islands.len().max(1) as f32;
         let fleet_pressure =
             (self.active_ship_count() as f32 / (island_count * TARGET_SHIPS_PER_ISLAND)).max(1.0);
+        let scuttle_threshold = STARTING_CASH * SCUTTLE_THRESHOLD_MULTIPLIER * fleet_pressure;
         let cost_factor = self
             .environmental_tuning()
             .global_friction_mult

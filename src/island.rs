@@ -412,20 +412,17 @@ impl Island {
         }
         let index = resource.idx();
         let price = self.bid_price(resource, market_spread);
-        if !price.is_finite() || price <= 0.0 || self.cash <= 0.0 {
+        if !price.is_finite() || price <= 0.0 {
             return (0.0, 0.0);
         }
 
-        let affordable = (self.cash / price).max(0.0);
-        let filled = amount.min(affordable);
-        let total_value = filled * price;
-        if filled <= 0.0 || total_value <= 0.0 {
-            return (0.0, 0.0);
-        }
-
-        self.inventory[index] += filled;
-        self.cash -= total_value;
-        (filled, total_value)
+        // Goods always transfer. Island pays what it has (floored at 0);
+        // ship accepts partial payment if the island is cash-poor.
+        let full_value = amount * price;
+        let payment = full_value.min(self.cash.max(0.0));
+        self.inventory[index] += amount;
+        self.cash -= payment;
+        (amount, payment)
     }
 
     /// Sells `resource` to a ship at ask price, limited by island inventory.
@@ -504,23 +501,24 @@ mod tests {
     }
 
     #[test]
-    fn sell_to_island_respects_affordability() {
+    fn sell_to_island_accepts_goods_beyond_cash() {
         let mut rng = StdRng::seed_from_u64(11);
         let mut island = Island::new(0, Vec2::new(0.0, 0.0), 1, &mut rng);
         island.cash = 10.0;
         island.local_prices[Resource::Tools.idx()] = 120.0;
         let starting_tools = island.inventory[Resource::Tools.idx()];
 
+        // Island has only 10 cash but ship sells 1.0 unit — goods always transfer.
         let (filled, paid) = island.sell_to_island(Resource::Tools, 1.0, 0.1);
-        let expected_price = 120.0 * (1.0 - 0.1 * 0.5);
-        let expected_filled = 10.0 / expected_price;
 
-        approx_eq(filled, expected_filled);
-        approx_eq(paid, 10.0);
+        // Full amount of goods transferred.
+        approx_eq(filled, 1.0);
         approx_eq(
             island.inventory[Resource::Tools.idx()],
-            starting_tools + expected_filled,
+            starting_tools + 1.0,
         );
+        // Island paid only what it had; cash floored at 0.
+        approx_eq(paid, 10.0);
         approx_eq(island.cash, 0.0);
     }
 

@@ -501,22 +501,6 @@ impl Ship {
             .min(MAX_DOCK_IDLE_RISK_ALLOWANCE)
     }
 
-    fn best_unload_resource(&self, island: &Island, market_spread: f32) -> Option<Resource> {
-        let (resource, amount) = self.cargo?;
-        if amount <= 0.0 {
-            return None;
-        }
-        let bid_price = island.bid_price(resource, market_spread);
-        if !bid_price.is_finite() || bid_price <= 0.0 {
-            return None;
-        }
-        let affordable = (island.cash / bid_price).max(0.0);
-        if affordable <= 0.0 {
-            return None;
-        }
-        Some(resource)
-    }
-
     pub fn just_sold_resource(&self) -> Option<Resource> {
         self.just_sold_resource
     }
@@ -590,20 +574,20 @@ impl Ship {
             return self.last_dock_action;
         }
 
-        let Some(resource) = self.best_unload_resource(island, tuning.market_spread) else {
+        let Some((resource, carrying_amount)) = self.cargo else {
             return self.last_dock_action;
         };
-        let carrying_amount = match self.cargo {
-            Some((r, amount)) if r == resource => amount.max(0.0),
-            _ => 0.0,
-        };
         if carrying_amount <= 0.0 {
+            return self.last_dock_action;
+        }
+        let bid_price = island.bid_price(resource, tuning.market_spread);
+        if !bid_price.is_finite() || bid_price <= 0.0 {
             return self.last_dock_action;
         }
 
         let (sold_amount, gross_revenue) =
             island.sell_to_island(resource, carrying_amount, tuning.market_spread);
-        if sold_amount <= 0.0 || gross_revenue <= 0.0 {
+        if sold_amount <= 0.0 {
             return self.last_dock_action;
         }
 

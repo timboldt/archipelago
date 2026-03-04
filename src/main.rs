@@ -25,7 +25,7 @@ fn handle_time_scale_input(time_scale: &mut f32) {
 async fn main() {
     // Number of islands and ships in the simulation.
     const NUM_ISLANDS: usize = 50;
-    const NUM_SHIPS: usize = 500;
+    const NUM_SHIPS: usize = 100;
 
     // Overall tuning parameters for ship planning.
     const GLOBAL_FRICTION_MULT: f32 = 1.0;
