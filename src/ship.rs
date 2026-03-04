@@ -24,8 +24,8 @@ const ROUTE_LEARNING_RATE: f32 = 0.20;
 const ROUTE_LEARNING_DECAY: f32 = 0.98;
 const HIGH_PRICE_RISK_WEIGHT: f32 = 0.65;
 const BASE_CARGO_VOLUME_CAPACITY: f32 = 22.0;
-const BASE_COST_PER_DISTANCE_RATE: f32 = 1.0;
-const BASE_MAINTENANCE_RATE: f32 = 0.002;
+const BASE_LABOR_RATE: f32 = 0.0004; // BASE_MAINTENANCE_RATE * 0.20
+const BASE_WEAR_RATE: f32 = 0.00012; // per distance unit
 const DOCK_IDLE_RISK_RAMP_PER_TICK: f32 = 0.015;
 const MAX_DOCK_IDLE_RISK_ALLOWANCE: f32 = 1.5;
 
@@ -82,7 +82,6 @@ impl Default for PlanningTuning {
 
 const MIN_SHIP_SPEED: f32 = 120.0;
 const MAX_SHIP_SPEED: f32 = 600.0;
-const BASE_COST_PER_DISTANCE: f32 = 0.00012;
 const DOCKED_PORT_FEE_MULTIPLIER: f32 = 1.5;
 const HEAVY_LOAD_WEAR_MULTIPLIER: f32 = 1.1;
 const BANKRUPTCY_CASH_FLOOR: f32 = -20.0;
@@ -143,15 +142,13 @@ pub struct Ship {
     archetype: ShipArchetype,
     efficiency_rating: f32,
     max_cargo_volume: f32,
-    cost_per_distance_rate: f32,
-    maintenance_rate: f32,
     target_island_id: Option<usize>,
     docked_at: Option<usize>,
     last_docked_island_id: Option<usize>,
     cargo: Option<(Resource, f32)>,
     pub cash: f32,
     labor_debt: f32,
-    repair_debt: f32,
+    wear_debt: f32,
     pub ledger: PriceLedger,
     route_memory: Vec<f32>,
     purchase_price: f32,
@@ -182,15 +179,13 @@ impl Ship {
             archetype,
             efficiency_rating,
             max_cargo_volume: 0.0,
-            cost_per_distance_rate: 0.0,
-            maintenance_rate: 0.0,
             target_island_id: Some(docked_island_id),
             docked_at: Some(docked_island_id),
             last_docked_island_id: Some(docked_island_id),
             cargo: None,
             cash: STARTING_CASH,
             labor_debt: 0.0,
-            repair_debt: 0.0,
+            wear_debt: 0.0,
             ledger: vec![
                 PriceEntry {
                     prices: [0.0; RESOURCE_COUNT],
@@ -222,8 +217,7 @@ impl Ship {
 
     fn recompute_operational_traits(&mut self) {
         let archetype = self.archetype;
-        let (speed_mult, capacity_mult, maintenance_mult, distance_cost_mult) =
-            Self::profile_multipliers(archetype);
+        let (speed_mult, capacity_mult, _, _) = Self::profile_multipliers(archetype);
 
         let efficiency_speed_factor =
             (0.92 + 0.30 * (self.efficiency_rating - 1.0)).clamp(0.85, 1.10);
@@ -235,20 +229,12 @@ impl Ship {
         self.max_cargo_volume =
             (BASE_CARGO_VOLUME_CAPACITY * capacity_mult * efficiency_capacity_factor)
                 .clamp(8.0, 80.0);
-
-        let efficiency_distance_cost_factor =
-            (1.20 - 0.40 * self.efficiency_rating).clamp(0.65, 1.15);
-        self.cost_per_distance_rate =
-            BASE_COST_PER_DISTANCE_RATE * distance_cost_mult * efficiency_distance_cost_factor;
-
-        let efficiency_maint_factor = (1.20 - 0.35 * self.efficiency_rating).clamp(0.70, 1.15);
-        self.maintenance_rate = BASE_MAINTENANCE_RATE * maintenance_mult * efficiency_maint_factor;
     }
 
     fn profile_multipliers(archetype: ShipArchetype) -> (f32, f32, f32, f32) {
         // (speed, capacity, maintenance, distance_cost)
         match archetype {
-            ShipArchetype::Clipper   => (1.50, 0.75, 1.50, 1.35),
+            ShipArchetype::Clipper => (1.50, 0.75, 1.50, 1.35),
             ShipArchetype::Shorthaul => (1.00, 1.00, 0.75, 0.80),
             ShipArchetype::Freighter => (0.75, 2.00, 1.00, 1.10),
         }
@@ -265,14 +251,6 @@ impl Ship {
 
     fn risk_tolerance(&self) -> f32 {
         self.strategy_genes.risk_tolerance_scale.max(0.25)
-    }
-
-    fn cost_per_distance(&self) -> f32 {
-        BASE_COST_PER_DISTANCE * self.cost_per_distance_rate
-    }
-
-    fn cost_per_time(&self) -> f32 {
-        self.maintenance_rate * 0.20
     }
 
     fn map_span(island_positions: &[Vec2]) -> f32 {
@@ -445,17 +423,17 @@ impl Ship {
                 } else {
                     self.median_price_for_resource(resource)
                 };
-                net_worth += (cargo_book_price * bid_multiplier(DEFAULT_MARKET_SPREAD) * amount)
-                    .max(0.0);
+                net_worth +=
+                    (cargo_book_price * bid_multiplier(DEFAULT_MARKET_SPREAD) * amount).max(0.0);
             }
         }
         net_worth - self.total_service_debt()
     }
 
     pub fn apply_maritime_friction(&mut self, dt: f32, global_friction_mult: f32) {
-        let mut labor_and_provisions = self.cost_per_time() * dt.max(0.0) * global_friction_mult;
+        let mut labor = self.labor_rate() * dt.max(0.0) * global_friction_mult;
         if self.docked_at.is_some() {
-            labor_and_provisions *= DOCKED_PORT_FEE_MULTIPLIER;
+            labor *= DOCKED_PORT_FEE_MULTIPLIER;
         }
 
         let cargo_load_ratio = if let Some((resource, amount)) = self.cargo {
@@ -465,13 +443,13 @@ impl Ship {
             0.0
         };
         let wear_multiplier = 1.0 + cargo_load_ratio * HEAVY_LOAD_WEAR_MULTIPLIER;
-        let rigging_and_repairs = self.last_step_distance.max(0.0)
-            * self.cost_per_distance()
+        let wear = self.last_step_distance.max(0.0)
+            * self.wear_rate()
             * global_friction_mult
             * wear_multiplier;
 
-        self.labor_debt += labor_and_provisions.max(0.0);
-        self.repair_debt += rigging_and_repairs.max(0.0);
+        self.labor_debt += labor.max(0.0);
+        self.wear_debt += wear.max(0.0);
         self.last_step_distance = 0.0;
     }
 
@@ -497,12 +475,16 @@ impl Ship {
         self.total_cargo_volume()
     }
 
-    pub fn cost_per_distance_rate(&self) -> f32 {
-        self.cost_per_distance_rate
+    pub fn wear_rate(&self) -> f32 {
+        let (_, _, _, wear_mult) = Self::profile_multipliers(self.archetype);
+        let efficiency_factor = (1.20 - 0.40 * self.efficiency_rating).clamp(0.65, 1.15);
+        BASE_WEAR_RATE * wear_mult * efficiency_factor
     }
 
-    pub fn maintenance_rate(&self) -> f32 {
-        self.maintenance_rate
+    pub fn labor_rate(&self) -> f32 {
+        let (_, _, labor_mult, _) = Self::profile_multipliers(self.archetype);
+        let efficiency_factor = (1.20 - 0.35 * self.efficiency_rating).clamp(0.70, 1.15);
+        BASE_LABOR_RATE * labor_mult * efficiency_factor
     }
 
     /// Returns current target island id while en route.
@@ -575,7 +557,7 @@ impl Ship {
     }
 
     fn total_service_debt(&self) -> f32 {
-        self.labor_debt.max(0.0) + self.repair_debt.max(0.0)
+        self.labor_debt.max(0.0) + self.wear_debt.max(0.0)
     }
 
     pub fn settle_service_debt(&mut self, island: &mut Island) -> f32 {
@@ -585,14 +567,14 @@ impl Ship {
         }
 
         let payment = self.cash.min(total_debt);
-        let repair_share = (self.repair_debt.max(0.0) / total_debt).clamp(0.0, 1.0);
-        let repair_paid = payment * repair_share;
-        let labor_paid = payment - repair_paid;
+        let wear_share = (self.wear_debt.max(0.0) / total_debt).clamp(0.0, 1.0);
+        let wear_paid = payment * wear_share;
+        let labor_paid = payment - wear_paid;
 
-        self.repair_debt = (self.repair_debt - repair_paid).max(0.0);
+        self.wear_debt = (self.wear_debt - wear_paid).max(0.0);
         self.labor_debt = (self.labor_debt - labor_paid).max(0.0);
         self.cash -= payment;
-        island.accept_service_payment(repair_paid, labor_paid);
+        island.accept_service_payment(wear_paid, labor_paid);
         payment
     }
 
@@ -1214,16 +1196,14 @@ impl Ship {
             / self.max_cargo_volume.max(0.01))
         .clamp(0.0, 1.0);
         let wear_multiplier = 1.0 + estimated_load_ratio * HEAVY_LOAD_WEAR_MULTIPLIER;
-        let rigging_repair_cost = distance
-            * self.cost_per_distance()
-            * context.tuning.global_friction_mult
-            * wear_multiplier;
+        let rigging_repair_cost =
+            distance * self.wear_rate() * context.tuning.global_friction_mult * wear_multiplier;
         let labor_provisions_trip_cost =
-            transit_time * self.cost_per_time() * context.tuning.global_friction_mult;
+            transit_time * self.labor_rate() * context.tuning.global_friction_mult;
         let capital_carry_cost = buy_price
             * effective_lot_size
             * transit_time
-            * self.cost_per_time()
+            * self.labor_rate()
             * context.tuning.global_friction_mult;
         let trip_cost_basis = rigging_repair_cost + labor_provisions_trip_cost + capital_carry_cost;
         let staleness_risk_cost = (1.0 - confidence) * trip_cost_basis / self.risk_tolerance();
@@ -1330,7 +1310,7 @@ mod tests {
         let mut ship = Ship::new(Vec2::new(0.0, 0.0), 300.0, 2, 0);
         ship.cash = -10.0;
         ship.labor_debt = 8.0;
-        ship.repair_debt = 4.0;
+        ship.wear_debt = 4.0;
 
         assert!(ship.is_bankrupt());
     }

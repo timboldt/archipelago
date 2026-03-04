@@ -161,9 +161,9 @@ pub(super) fn ship_inspector_view(world: &World, active_ship_count: usize) -> Sh
             ship.max_cargo_volume()
         ),
         upkeep_text: format!(
-            "Labor/Wear cost: {:.4} / {:.2}",
-            ship.maintenance_rate(),
-            ship.cost_per_distance_rate()
+            "Labor/Wear: {:.4} / {:.4}",
+            ship.labor_rate(),
+            ship.wear_rate()
         ),
         cash_text: format!("Cash: {:.1}", ship.cash),
         cargo_resource_text,
