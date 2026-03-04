@@ -1,28 +1,16 @@
+mod utility;
+
 use ::rand::Rng;
 use macroquad::prelude::Vec2;
 use strum::IntoEnumIterator;
 
-use crate::island::{
-    Island, PriceEntry, PriceLedger, Resource, BASE_COSTS, INVENTORY_CARRYING_CAPACITY,
-    RESOURCE_COUNT,
-};
+use crate::island::{Island, PriceEntry, PriceLedger, Resource, RESOURCE_COUNT};
 
 const TRADE_ACTION_VOLUME: f32 = 18.0;
 pub const STARTING_CASH: f32 = 200.0;
-const UNKNOWN_CASH_CONFIDENCE_SCALE: f32 = 0.70;
-const DEFAULT_MARKET_DEPTH_FALLBACK: f32 = 600.0;
-const RECENT_BROKE_TICKS: f32 = 180.0;
-const BROKE_ISLAND_UTILITY_PENALTY: f32 = 5.5;
-const BROKE_CASH_COVERAGE_RATIO: f32 = 0.35;
-const BROKE_DESTINATION_BLOCK_CASH: f32 = 1.0;
-const BROKE_DESTINATION_BLOCK_MAX_AGE: f32 = 180.0;
-const INDUSTRIAL_INFRA_THRESHOLD: f32 = 1.5;
-const INDUSTRIAL_INPUT_BONUS_PER_INFRA: f32 = 4.0;
-const INDUSTRIAL_INPUT_BONUS_CAP: f32 = 14.0;
 const DEFAULT_MARKET_SPREAD: f32 = 0.10;
 const ROUTE_LEARNING_RATE: f32 = 0.20;
 const ROUTE_LEARNING_DECAY: f32 = 0.98;
-const HIGH_PRICE_RISK_WEIGHT: f32 = 0.65;
 const BASE_CARGO_VOLUME_CAPACITY: f32 = 22.0;
 const BASE_LABOR_RATE: f32 = 0.0004; // BASE_MAINTENANCE_RATE * 0.20
 const BASE_WEAR_RATE: f32 = 0.00012; // per distance unit
@@ -46,14 +34,6 @@ pub struct LoadPlanningContext<'a> {
     pub current_tick: u64,
     pub tuning: &'a PlanningTuning,
     pub outbound_recent_departures: &'a [f32],
-}
-
-struct UtilityContext<'a> {
-    island_positions: &'a [Vec2],
-    max_route_distance: f32,
-    current_tick: u64,
-    tuning: &'a PlanningTuning,
-    outbound_recent_departures: &'a [f32],
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -711,7 +691,7 @@ impl Ship {
         let mut chosen_target: Option<usize> = None;
         let mut chosen_local_price = 0.0;
         let mut best_utility = f32::NEG_INFINITY;
-        let utility_context = UtilityContext {
+        let utility_context = utility::UtilityContext {
             island_positions: context.island_positions,
             max_route_distance: self.max_route_distance_for_planning(context.island_positions),
             current_tick: context.current_tick,
@@ -829,7 +809,7 @@ impl Ship {
             return diagnostics;
         }
 
-        let utility_context = UtilityContext {
+        let utility_context = utility::UtilityContext {
             island_positions: context.island_positions,
             max_route_distance: self.max_route_distance_for_planning(context.island_positions),
             current_tick: context.current_tick,
@@ -932,7 +912,7 @@ impl Ship {
         outbound_recent_departures: &[f32],
     ) -> Option<usize> {
         if let Some((resource, amount)) = self.cargo {
-            let utility_context = UtilityContext {
+            let utility_context = utility::UtilityContext {
                 island_positions,
                 max_route_distance: self.max_route_distance_for_planning(island_positions),
                 current_tick,
@@ -981,7 +961,7 @@ impl Ship {
 
         let mut best_target = None;
         let mut best_utility = f32::NEG_INFINITY;
-        let utility_context = UtilityContext {
+        let utility_context = utility::UtilityContext {
             island_positions,
             max_route_distance: self.max_route_distance_for_planning(island_positions),
             current_tick,
@@ -1073,164 +1053,6 @@ impl Ship {
         } else {
             Some(cash_values[mid])
         }
-    }
-
-    fn destination_confidence(
-        &self,
-        target_id: usize,
-        distance: f32,
-        current_tick: u64,
-        tuning: &PlanningTuning,
-        outbound_recent_departures: &[f32],
-    ) -> f32 {
-        let transit_time = distance / self.speed.max(1.0);
-        let data_age = current_tick.saturating_sub(self.ledger[target_id].tick_updated) as f32;
-        let base_confidence = (-tuning.info_decay_rate * (data_age + transit_time))
-            .exp()
-            .clamp(0.05, 1.0);
-
-        let recent_route_flow = outbound_recent_departures
-            .get(target_id)
-            .copied()
-            .unwrap_or(0.0)
-            .max(0.0);
-        let route_confidence_factor = if recent_route_flow >= 1.0 {
-            1.0 / recent_route_flow
-        } else {
-            1.0
-        };
-
-        (base_confidence * route_confidence_factor).clamp(0.02, 1.0)
-    }
-
-    fn calculate_utility(
-        &self,
-        resource: Resource,
-        target_id: usize,
-        buy_price: f32,
-        lot_size: f32,
-        context: &UtilityContext<'_>,
-    ) -> f32 {
-        if target_id >= self.ledger.len() || target_id >= context.island_positions.len() {
-            return f32::NEG_INFINITY;
-        }
-
-        if !buy_price.is_finite() || buy_price <= 0.0 {
-            return f32::NEG_INFINITY;
-        }
-
-        let quoted_sell_price = self.ledger[target_id].prices[resource.idx()];
-        let quoted_inventory = self.ledger[target_id].inventories[resource.idx()].max(0.0);
-        let has_quoted_sell_price = quoted_sell_price.is_finite() && quoted_sell_price > 0.0;
-        let median_market_price = self.median_price_for_resource(resource);
-        let quoted_bid_price = quoted_sell_price * bid_multiplier(context.tuning.market_spread);
-        let expected_sell_price = if has_quoted_sell_price {
-            quoted_bid_price
-        } else if median_market_price > 0.0 {
-            median_market_price * bid_multiplier(context.tuning.market_spread)
-        } else {
-            buy_price
-        };
-
-        let distance = (self.pos - context.island_positions[target_id]).length();
-        if distance > context.max_route_distance {
-            return f32::NEG_INFINITY;
-        }
-        let transit_time = distance / self.speed.max(1.0);
-        let mut confidence = self.destination_confidence(
-            target_id,
-            distance,
-            context.current_tick,
-            context.tuning,
-            context.outbound_recent_departures,
-        );
-        if !has_quoted_sell_price {
-            confidence = (confidence * 0.45).clamp(0.02, 1.0);
-        }
-
-        let quoted_island_cash = self.ledger[target_id].cash;
-        let has_quoted_cash = quoted_island_cash.is_finite() && quoted_island_cash > 0.0;
-        let data_age = context
-            .current_tick
-            .saturating_sub(self.ledger[target_id].tick_updated) as f32;
-        let recently_broke_destination = quoted_island_cash <= BROKE_DESTINATION_BLOCK_CASH
-            && data_age <= BROKE_DESTINATION_BLOCK_MAX_AGE;
-        if recently_broke_destination {
-            // Keep route eligible for barter-driven flow, but discount confidence.
-            confidence = (confidence * 0.55).clamp(0.02, 1.0);
-        }
-        let fallback_cash = self
-            .median_island_cash()
-            .unwrap_or(DEFAULT_MARKET_DEPTH_FALLBACK)
-            .max(DEFAULT_MARKET_DEPTH_FALLBACK);
-        let market_depth_cash = if has_quoted_cash {
-            quoted_island_cash
-        } else {
-            confidence = (confidence * UNKNOWN_CASH_CONFIDENCE_SCALE).clamp(0.02, 1.0);
-            fallback_cash
-        };
-
-        let available_storage = (INVENTORY_CARRYING_CAPACITY - quoted_inventory).max(0.0);
-        let effective_lot_size = lot_size.max(0.0).min(available_storage);
-        if effective_lot_size <= 0.0 {
-            return f32::NEG_INFINITY;
-        }
-
-        let gross_expected_revenue = expected_sell_price * effective_lot_size;
-        let real_expected_revenue = if has_quoted_cash {
-            gross_expected_revenue.min(market_depth_cash * 0.9)
-        } else {
-            // Cash-starved destinations can still settle value via barter swaps.
-            gross_expected_revenue
-        };
-        let real_expected_profit = real_expected_revenue - (buy_price * effective_lot_size);
-
-        let average_base_cost = BASE_COSTS.iter().copied().sum::<f32>() / RESOURCE_COUNT as f32;
-        let relative_price = (buy_price / average_base_cost).max(0.0);
-        let price_risk_penalty = (relative_price - 1.0).max(0.0) * HIGH_PRICE_RISK_WEIGHT;
-        let price_risk_factor = (1.0 / (1.0 + price_risk_penalty)).clamp(0.35, 1.0);
-        confidence *= price_risk_factor;
-
-        let expected_profit = real_expected_profit * confidence;
-        let estimated_load_ratio = (effective_lot_size * resource.volume_per_unit().max(0.01)
-            / self.max_cargo_volume.max(0.01))
-        .clamp(0.0, 1.0);
-        let wear_multiplier = 1.0 + estimated_load_ratio * HEAVY_LOAD_WEAR_MULTIPLIER;
-        let rigging_repair_cost =
-            distance * self.wear_rate() * context.tuning.global_friction_mult * wear_multiplier;
-        let labor_provisions_trip_cost =
-            transit_time * self.labor_rate() * context.tuning.global_friction_mult;
-        let capital_carry_cost = buy_price
-            * effective_lot_size
-            * transit_time
-            * self.labor_rate()
-            * context.tuning.global_friction_mult;
-        let trip_cost_basis = rigging_repair_cost + labor_provisions_trip_cost + capital_carry_cost;
-        let staleness_risk_cost = (1.0 - confidence) * trip_cost_basis / self.risk_tolerance();
-
-        let broke_revenue_threshold = gross_expected_revenue * BROKE_CASH_COVERAGE_RATIO;
-        let recent_broke_factor = (1.0 - data_age / RECENT_BROKE_TICKS).clamp(0.0, 1.0);
-        let broke_penalty = if has_quoted_cash && quoted_island_cash < broke_revenue_threshold {
-            BROKE_ISLAND_UTILITY_PENALTY * recent_broke_factor
-        } else {
-            0.0
-        };
-
-        let industrial_bonus = if resource == Resource::Iron || resource == Resource::Timber {
-            let infra_excess =
-                (self.ledger[target_id].infrastructure_level - INDUSTRIAL_INFRA_THRESHOLD).max(0.0);
-            (infra_excess * INDUSTRIAL_INPUT_BONUS_PER_INFRA).min(INDUSTRIAL_INPUT_BONUS_CAP)
-        } else {
-            0.0
-        };
-
-        expected_profit
-            - rigging_repair_cost
-            - labor_provisions_trip_cost
-            - capital_carry_cost
-            - staleness_risk_cost
-            + industrial_bonus
-            - broke_penalty
     }
 
     /// Move toward target. Returns the island id when docking this tick.
