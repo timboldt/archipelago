@@ -150,6 +150,8 @@ impl World {
                             *slot += 1.0;
                         }
                     }
+                } else {
+                    let _ = ship.pay_idle_port_fee(island);
                 }
             }
 

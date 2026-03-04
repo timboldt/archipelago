@@ -69,6 +69,12 @@ const BASE_DOCKING_TAX_RATE: f32 = 0.0015;
 const MAX_DOCKING_TAX_RATE: f32 = 0.02;
 const LIQUIDITY_IMBALANCE_TAX_SLOPE: f32 = 0.01;
 const DOCKING_TAX_CASH_RESERVE_MULTIPLIER: f32 = 0.75;
+/// Flat fee per tick charged when a ship cannot plan any departure route,
+/// applied only after IDLE_FEE_GRACE_TICKS of consecutive failed plans.
+const IDLE_PORT_FEE_PER_TICK: f32 = STARTING_CASH * 0.006;
+/// Grace period before idle fee kicks in; prevents penalising ships that are
+/// merely waiting for better market conditions.
+const IDLE_FEE_GRACE_TICKS: u32 = 100;
 const MIN_EFFICIENCY_RATING: f32 = 0.80;
 const MAX_EFFICIENCY_RATING: f32 = 1.30;
 const MIN_GENE_SCALE: f32 = 0.80;
@@ -558,6 +564,21 @@ impl Ship {
         self.cash -= tax;
         island.cash += tax;
         tax
+    }
+
+    /// Increments the failed-plan counter and charges a mooring fee once the
+    /// grace period has elapsed.  Prevents ships from idling at port
+    /// indefinitely when no route exists (e.g. a shorthaul ship with no
+    /// reachable destinations).
+    pub fn pay_idle_port_fee(&mut self, island: &mut Island) -> f32 {
+        self.dock_idle_ticks = self.dock_idle_ticks.saturating_add(1);
+        if self.dock_idle_ticks <= IDLE_FEE_GRACE_TICKS {
+            return 0.0;
+        }
+        let fee = IDLE_PORT_FEE_PER_TICK;
+        self.cash -= fee;
+        island.cash += fee.max(0.0);
+        fee
     }
 
     pub fn removal_cash_settlement(&self) -> f32 {
