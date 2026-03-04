@@ -43,15 +43,15 @@ cargo +nightly fmt
 - **Island visuals:** Islands are drawn as compact 5-bar charts for Grain, Timber, Iron, Tools, and Spices abundance.
 - **Island module boundaries:** `Island` now contains economy/market logic only; world-space island rendering lives under `src/world/` UI helpers.
 - **Ship module boundaries:** `Ship` now contains movement/planning/settlement logic only; world-space ship rendering lives under `src/world/` UI helpers.
-- **Ship visuals:** Ship shape encodes archetype (Freighter = square, Runner = triangle, Coaster = circle), and ship color reflects whichever cargo resource is largest by onboard value.
+- **Ship visuals:** Ship shape encodes archetype (Freighter = square, Clipper = triangle, Shorthaul = circle), and ship color reflects the currently carried cargo resource.
 - **Island status bars:** Each island chart now includes three horizontal bars beneath it for Population, Cash, and Infrastructure.
 - **Chart readability:** Island chart dimensions are scaled from current view units-per-pixel so bars stay legible across zoom/viewport changes.
 - **UI legend:** A fixed top-left legend maps resource colors (and empty ships) for quick visual decoding.
-- **Ship shape key:** The same panel includes a compact ship-shape legend (Runner triangle, Freighter square, Coaster circle).
+- **Ship shape key:** The same panel includes a compact ship-shape legend (Clipper triangle, Freighter square, Shorthaul circle).
 - **Legend counters:** The legend now shows total archipelago inventory beside each resource label.
 - **Macro counters:** The same panel also shows global Population, global Cash, and average Industry (infrastructure level).
 - **Tuning HUD:** The left panel shows effective global friction for ship economics.
-- **Fleet HUD:** The panel shows current ship count plus archetype mix (`R/F/C` = Runner/Freighter/Coaster).
+- **Fleet HUD:** The panel shows current ship count plus archetype mix (`Cl/Fr/Sh` = Clipper/Freighter/Shorthaul).
 - **Ship inspector HUD:** A top-right panel shows one selected ship's details (archetype, status, speed, cargo volume usage, rigging/labor rates, cash, and dominant cargo by value).
 - **Selection highlight:** The currently selected ship is marked in world space with a red ring.
 - **Island inspector HUD:** A second top-right panel shows one selected island's details (population, cash, infrastructure, inventory mix, and local prices).
@@ -80,16 +80,16 @@ cargo +nightly fmt
 - **Infrastructure credit loop:** Islands accrue internal infrastructure credit (separate from cash) and spend that credit on infrastructure growth.
 - **Transport cost:** Planning continues to price distance/time friction into expected utility so route choice remains cost-aware.
 - **Maritime friction:** Ships accrue (1) time-based labor/provisions and (2) distance-based repair wear as dock-payable debt.
-- **Dock settlement:** After selling/bartering cargo, ships settle accrued labor/repair debt to the island before loading the next leg.
+- **Dock settlement:** After selling cargo, ships settle accrued labor/repair debt to the island before loading the next leg.
 - **Dynamic docking tax:** Ports levy a liquidity-aware tax on ship cash surplus (above a reserve) when dock actions occur; rates rise when ships are cash-rich relative to the island.
 - **Dock-only bankruptcy:** Bankruptcy culling is resolved at dock; a bankrupt ship transfers its remaining cash to the docked island before removal.
 - **Provision scarcity ceiling:** Friction self-adjusts with fleet crowding (ships vs target ships per island), creating a self-limiting competitive overhead as population grows.
-- **Pair-based load selection:** Empty ships score full `(local resource -> destination island)` pairs and buy the resource from the best pair, rather than picking the cheapest local good first.
+- **Pair-based load selection:** Empty ships score all `(local resource → destination island)` pairs and buy the resource with the best expected utility, rather than picking the cheapest local good first.
 - **Anti-roundtrip guard:** A ship will not immediately reload the same resource it just sold in the same dock cycle.
 - **Information flow:** Price ledgers are merged only during ship-island docking interactions, with a dedicated parallel per-island buffered merge and stable snapshot reads so island world-view does not shift mid-tick due to ship-processing order.
 - **Stable ship IDs:** Fleet storage now uses stable slot IDs (`Vec<Option<Ship>>`); per-island dock processing temporarily extracts docked ships, processes in parallel, then reinserts each ship into its original slot.
 - **Planning:** Route selection uses deterministic, risk-adjusted expected-value utility over volume-constrained lot sizes (`expected profit - distance/time/carry costs - staleness risk`) with confidence decay from data staleness + transit latency.
-- **Loaded-cargo routing:** When carrying mixed cargo, ships now score each destination by summing utility across all carried resources (portfolio optimization) rather than following only the single best cargo lane.
+- **Loaded-cargo routing:** When carrying cargo, ships score each destination by computing expected utility for the single carried resource.
 - **Capital carry cost:** Utility now includes a transit-time capital lock-up penalty and high-price risk attenuation, reducing over-selection of expensive cargo when long-haul uncertainty is high.
 - **Liquidity-aware planning:** Ship ledgers now gossip destination `cash`, and route utility caps expected revenue by known market depth so traders avoid chasing phantom high prices at bankrupt islands.
 - **Storage-aware planning:** Ship ledgers also gossip inventory snapshots; utility discounts destination demand by available storage headroom so traders avoid over-delivering into saturated markets.
@@ -97,16 +97,9 @@ cargo +nightly fmt
 - **Recent-broke avoidance:** Ships apply a short-lived utility penalty to destinations recently observed as cash-poor, reducing repeated revisits to liquidity-starved islands after partial unloads.
 - **Broke-route suppression:** Ships now hard-reject very recent zero-cash destinations during utility evaluation, preventing persistent back-and-forth loops between bankrupt islands.
 - **Bid/ask spread:** Islands quote a spread (buy from ships at `0.95×` local, sell to ships at `1.05×` local), reducing churn loops and helping islands rebuild reserves.
-- **Barter swap-and-go:** When cash settlement is constrained, carrying ships can perform value-equivalent cargo swaps at dock (barter), allowing goods to keep flowing even during local liquidity crunches.
-- **Partial unloads:** Ships already sell whatever quantity an island can currently afford; if a sale is only partial and cargo remains, ships are now allowed to redepart in the same tick instead of waiting docked.
-- **Empty-cargo relocation:** If a ship cannot load, it still picks its next island by maximizing the same expected-value utility over candidate resource opportunities (using its local ledger prices as reference buy prices).
-- **Anti-herding:** Planning applies a pheromone-style route signal over the last 10 ticks: if many ships recently left `A -> B`, confidence in `B`'s quoted prices is attenuated by approximately `1/N` for ships departing from `A`.
-- **Ship learning:** Each ship maintains a decaying destination memory updated by realized trade margins, and this memory biases future route utility.
-- **Ship trade-off triangle:** Each ship now carries coupled hull traits (size + efficiency) that jointly determine speed, cargo volume capacity, rigging/repair wear rate, and ongoing labor/provisions burn; hull size strongly anchors speed class so runners are visibly faster while freighters are slower.
-- **Archetype profiles:** Hull bands map to explicit profiles with clear separation: Runner (`speed≈1.5x`, `capacity≈0.75x`, `labor burn≈1.5x`), Coaster (`1.0x`, `1.0x`, `0.75x`), Freighter (`0.75x`, `2.0x`, `1.0x`) before efficiency modulation.
-- **Operational niches:** Mutation and selection can produce fast runners (high speed/low capacity), bulk haulers (high capacity/lower speed), and efficient coasters (lower rigging/labor drag).
+- **Archetype profiles:** Three discrete archetypes with clear separation: Clipper (`speed≈1.5x`, `capacity≈0.75x`, `labor burn≈1.5x`), Shorthaul (`1.0x`, `1.0x`, `0.75x`, short-haul range limit), Freighter (`0.75x`, `2.0x`, `1.0x`) before efficiency modulation. Archetype is fixed at spawn; daughters inherit the parent's archetype with a small chance of random mutation.
 - **Wealth tax / upkeep:** Ships accrue trait-derived labor/provisions and wear liabilities in transit/dock phases, and also face liquidity-aware docking taxes, so persistently unprofitable traders eventually fail lifecycle thresholds.
-- **Bankruptcy failure:** If a ship arrives deeply insolvent and cannot recover via dock settlement (sell/barter phase), it is culled immediately (using a negative-cash floor rather than zero).
+- **Bankruptcy failure:** If a ship arrives deeply insolvent and cannot recover via dock settlement (sell phase), it is culled immediately (using a negative-cash floor rather than zero).
 - **Lifecycle selection:** Fleet composition evolves over time: low-cash ships are retired, while wealthy ships can split into daughter ships with small Gaussian strategy mutations (not restricted to docked-only parents).
 - **Scuttle semantics:** Scuttled ships are marked as empty slots (`None`) instead of compacting the ship array, and their remaining cash is applied to their last docked island.
 - **Birth throttling:** Daughter creation now pays a birth fee and uses a pressure-scaled threshold tied to effective global friction and fleet saturation (ships per island), curbing runaway fleet growth.

@@ -16,9 +16,9 @@ pub(super) struct HudSummary {
     pub avg_infrastructure: f32,
     pub friction_mult: f32,
     pub active_ship_count: usize,
-    pub runner_count: usize,
+    pub clipper_count: usize,
     pub freighter_count: usize,
-    pub coaster_count: usize,
+    pub shorthaul_count: usize,
     pub perf_economy_ms: f32,
     pub perf_movement_ms: f32,
     pub perf_dock_ms: f32,
@@ -36,8 +36,7 @@ pub(super) struct ShipInspectorView {
     pub cargo_text: String,
     pub upkeep_text: String,
     pub cash_text: String,
-    pub cargo_mix_text: String,
-    pub dominant_cargo_text: String,
+    pub cargo_resource_text: String,
 }
 
 /// Display-ready fields for the selected-island inspector panel.
@@ -72,14 +71,14 @@ pub(super) fn hud_summary(world: &World) -> HudSummary {
         total_infrastructure / world.islands.len() as f32
     };
 
-    let mut runner_count = 0_usize;
+    let mut clipper_count = 0_usize;
     let mut freighter_count = 0_usize;
-    let mut coaster_count = 0_usize;
+    let mut shorthaul_count = 0_usize;
     for ship in world.ships.iter().flatten() {
         match ship.archetype() {
-            ShipArchetype::Runner => runner_count += 1,
+            ShipArchetype::Clipper => clipper_count += 1,
             ShipArchetype::Freighter => freighter_count += 1,
-            ShipArchetype::Coaster => coaster_count += 1,
+            ShipArchetype::Shorthaul => shorthaul_count += 1,
         }
     }
 
@@ -90,9 +89,9 @@ pub(super) fn hud_summary(world: &World) -> HudSummary {
         avg_infrastructure,
         friction_mult: world.environmental_tuning().global_friction_mult,
         active_ship_count: world.active_ship_count(),
-        runner_count,
+        clipper_count,
         freighter_count,
-        coaster_count,
+        shorthaul_count,
         perf_economy_ms: world.frame_timings.economy_ms,
         perf_movement_ms: world.frame_timings.movement_ms,
         perf_dock_ms: world.frame_timings.dock_ms,
@@ -114,15 +113,14 @@ pub(super) fn ship_inspector_view(world: &World, active_ship_count: usize) -> Sh
             cargo_text: String::new(),
             upkeep_text: String::new(),
             cash_text: String::new(),
-            cargo_mix_text: String::new(),
-            dominant_cargo_text: String::new(),
+            cargo_resource_text: String::new(),
         };
     };
 
     let archetype_label = match ship.archetype() {
-        ShipArchetype::Runner => "Runner",
+        ShipArchetype::Clipper => "Clipper",
         ShipArchetype::Freighter => "Freighter",
-        ShipArchetype::Coaster => "Coaster",
+        ShipArchetype::Shorthaul => "Shorthaul",
     };
 
     let status_text = if let Some(island_id) = ship.docked_island() {
@@ -133,7 +131,7 @@ pub(super) fn ship_inspector_view(world: &World, active_ship_count: usize) -> Sh
         "Status: Idle".to_string()
     };
 
-    let dominant_cargo_text = if let Some((resource, value)) = ship.dominant_cargo_by_value() {
+    let cargo_resource_text = if let Some((resource, amount)) = ship.current_cargo() {
         let label = match resource {
             Resource::Grain => "Grain",
             Resource::Timber => "Timber",
@@ -141,9 +139,9 @@ pub(super) fn ship_inspector_view(world: &World, active_ship_count: usize) -> Sh
             Resource::Tools => "Tools",
             Resource::Spices => "Spices",
         };
-        format!("Top cargo value: {} ({:.0})", label, value)
+        format!("Cargo: {} x{:.1}", label, amount)
     } else {
-        "Top cargo value: Empty".to_string()
+        "Cargo: Empty".to_string()
     };
 
     ShipInspectorView {
@@ -163,20 +161,12 @@ pub(super) fn ship_inspector_view(world: &World, active_ship_count: usize) -> Sh
             ship.max_cargo_volume()
         ),
         upkeep_text: format!(
-            "Distance/Time cost: {:.2} / {:.4}",
-            ship.cost_per_distance_rate(),
-            ship.maintenance_rate()
+            "Labor/Wear cost: {:.4} / {:.2}",
+            ship.maintenance_rate(),
+            ship.cost_per_distance_rate()
         ),
         cash_text: format!("Cash: {:.1}", ship.cash),
-        cargo_mix_text: format!(
-            "Cargo G/T/I/To/S: {:.1}/{:.1}/{:.1}/{:.1}/{:.1}",
-            ship.cargo_amount(Resource::Grain),
-            ship.cargo_amount(Resource::Timber),
-            ship.cargo_amount(Resource::Iron),
-            ship.cargo_amount(Resource::Tools),
-            ship.cargo_amount(Resource::Spices),
-        ),
-        dominant_cargo_text,
+        cargo_resource_text,
     }
 }
 

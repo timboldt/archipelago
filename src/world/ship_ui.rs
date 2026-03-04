@@ -9,7 +9,7 @@ use crate::ship::{Ship, ShipArchetype};
 
 /// Draws a ship marker using archetype-specific shape and dominant-cargo color.
 pub(super) fn draw_ship(ship: &Ship) {
-    let fill = match ship.dominant_cargo_by_value().map(|(resource, _)| resource) {
+    let fill = match ship.current_cargo().map(|(resource, _)| resource) {
         Some(resource) => match resource {
             Resource::Grain => YELLOW,
             Resource::Timber => GREEN,
@@ -39,14 +39,14 @@ pub(super) fn draw_ship(ship: &Ship) {
                 LIGHTGRAY,
             );
         }
-        ShipArchetype::Runner => {
+        ShipArchetype::Clipper => {
             let top = vec2(ship.pos.x, ship.pos.y - 8.0);
             let left = vec2(ship.pos.x - 7.0, ship.pos.y + 6.0);
             let right = vec2(ship.pos.x + 7.0, ship.pos.y + 6.0);
             draw_triangle(top, left, right, fill);
             draw_triangle_lines(top, left, right, 2.0, LIGHTGRAY);
         }
-        ShipArchetype::Coaster => {
+        ShipArchetype::Shorthaul => {
             draw_circle(ship.pos.x, ship.pos.y, 8.0, fill);
             draw_circle_lines(ship.pos.x, ship.pos.y, 8.0, 2.0, LIGHTGRAY);
         }

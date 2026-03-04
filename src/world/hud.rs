@@ -65,24 +65,24 @@ pub(super) fn draw_ui(world: &World) {
     draw_text("Ship Shapes", panel_x + 10.0, shape_legend_y, 18.0, WHITE);
 
     let icon_y = shape_legend_y + 14.0;
-    let runner_x = panel_x + 14.0;
+    let clipper_x = panel_x + 14.0;
     let freighter_x = panel_x + 92.0;
-    let coaster_x = panel_x + 188.0;
+    let shorthaul_x = panel_x + 188.0;
 
-    let runner_top = vec2(runner_x, icon_y - 8.0);
-    let runner_left = vec2(runner_x - 7.0, icon_y + 6.0);
-    let runner_right = vec2(runner_x + 7.0, icon_y + 6.0);
-    draw_triangle(runner_top, runner_left, runner_right, WHITE);
-    draw_triangle_lines(runner_top, runner_left, runner_right, 1.5, LIGHTGRAY);
-    draw_text("Runner", runner_x + 12.0, icon_y + 4.0, 16.0, WHITE);
+    let clipper_top = vec2(clipper_x, icon_y - 8.0);
+    let clipper_left = vec2(clipper_x - 7.0, icon_y + 6.0);
+    let clipper_right = vec2(clipper_x + 7.0, icon_y + 6.0);
+    draw_triangle(clipper_top, clipper_left, clipper_right, WHITE);
+    draw_triangle_lines(clipper_top, clipper_left, clipper_right, 1.5, LIGHTGRAY);
+    draw_text("Clipper", clipper_x + 12.0, icon_y + 4.0, 16.0, WHITE);
 
     draw_rectangle(freighter_x - 7.0, icon_y - 7.0, 14.0, 14.0, WHITE);
     draw_rectangle_lines(freighter_x - 7.0, icon_y - 7.0, 14.0, 14.0, 1.5, LIGHTGRAY);
     draw_text("Freighter", freighter_x + 12.0, icon_y + 4.0, 16.0, WHITE);
 
-    draw_circle(coaster_x, icon_y, 7.0, WHITE);
-    draw_circle_lines(coaster_x, icon_y, 7.0, 1.5, LIGHTGRAY);
-    draw_text("Coaster", coaster_x + 12.0, icon_y + 4.0, 16.0, WHITE);
+    draw_circle(shorthaul_x, icon_y, 7.0, WHITE);
+    draw_circle_lines(shorthaul_x, icon_y, 7.0, 1.5, LIGHTGRAY);
+    draw_text("Shorthaul", shorthaul_x + 12.0, icon_y + 4.0, 16.0, WHITE);
 
     let pop_text = format!("Population: {:.0}", summary.total_population);
     let cash_text = format!("Cash: {:.0}", summary.total_cash);
@@ -90,8 +90,8 @@ pub(super) fn draw_ui(world: &World) {
     let mile_cost_text = format!("Friction x: {:.2}", summary.friction_mult);
     let ship_count_text = format!("Ships: {}", summary.active_ship_count);
     let archetype_text = format!(
-        "R/F/C: {}/{}/{}",
-        summary.runner_count, summary.freighter_count, summary.coaster_count
+        "Cl/Fr/Sh: {}/{}/{}",
+        summary.clipper_count, summary.freighter_count, summary.shorthaul_count
     );
     let perf_header_text = "Perf (ms)";
     let perf_economy_text = format!("Economy: {:.2}", summary.perf_economy_ms);
@@ -249,16 +249,9 @@ pub(super) fn draw_ui(world: &World) {
         WHITE,
     );
     draw_text(
-        &ship_view.cargo_mix_text,
+        &ship_view.cargo_resource_text,
         inspect_x + 10.0,
         inspect_y + 174.0,
-        17.0,
-        WHITE,
-    );
-    draw_text(
-        &ship_view.dominant_cargo_text,
-        inspect_x + 10.0,
-        inspect_y + 192.0,
         17.0,
         WHITE,
     );

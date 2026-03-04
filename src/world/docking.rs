@@ -44,17 +44,9 @@ impl World {
         for (idx, (_, ship)) in docked_ships.iter_mut().enumerate() {
             let ship_tuning = ship.effective_tuning(planning_tuning);
             ship.begin_dock_tick();
-            let load_context = LoadPlanningContext {
-                current_island_id: island_id,
-                island_positions,
-                current_tick: tick,
-                tuning: &ship_tuning,
-                outbound_recent_departures: &outbound_recent_departures,
-            };
             let settled_any = ship.trade_settle_until_stuck(
                 island_id,
                 island,
-                &load_context,
                 &ship_tuning,
                 MAX_DOCK_SETTLEMENT_STEPS,
             );
