@@ -1,6 +1,5 @@
 //! Island entity spawning.
 
-
 use bevy::prelude::*;
 
 use crate::components::{IslandId, IslandMarker, MarketLedger, Position};

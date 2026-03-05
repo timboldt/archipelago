@@ -4,18 +4,16 @@
 //! decomposed across several components, but `ShipState` reassembles them for
 //! method calls that need cross-cutting access.
 
-
 pub mod spawn;
 mod utility;
 
 use ::rand::Rng;
-use bevy::prelude::{Vec2, Mut};
+use bevy::prelude::{Mut, Vec2};
 use strum::IntoEnumIterator;
 
 use crate::components::{
-    ask_multiplier, bid_multiplier, DockAction, PriceEntry, PriceLedger, Resource,
-    ShipArchetype, ShipLedger, ShipMovement, ShipProfile, ShipTrading, StrategyGenes,
-    RESOURCE_COUNT,
+    ask_multiplier, bid_multiplier, DockAction, PriceEntry, PriceLedger, Resource, ShipArchetype,
+    ShipLedger, ShipMovement, ShipProfile, ShipTrading, StrategyGenes, RESOURCE_COUNT,
 };
 use crate::island::IslandEconomy;
 
@@ -191,22 +189,54 @@ impl ShipState {
 
     // ── Accessors ──────────────────────────────────────────────────────
 
-    pub fn pos(&self) -> Vec2 { self.pos }
-    pub fn speed(&self) -> f32 { self.speed }
-    pub fn max_cargo_volume(&self) -> f32 { self.max_cargo_volume }
-    pub fn archetype(&self) -> ShipArchetype { self.archetype }
-    pub fn docked_island(&self) -> Option<usize> { self.docked_at }
-    pub fn last_docked_island(&self) -> Option<usize> { self.docked_at.or(self.last_docked_island_id) }
-    pub fn target_island(&self) -> Option<usize> { self.target_island_id }
-    pub fn current_cargo(&self) -> Option<(Resource, f32)> { self.cargo }
-    pub fn has_no_cargo(&self) -> bool { self.cargo.is_none() }
-    pub fn just_sold_resource(&self) -> Option<Resource> { self.just_sold_resource }
-    pub fn cargo_changed_this_dock(&self) -> bool { self.cargo_changed_this_dock }
-    pub fn ledger(&self) -> &PriceLedger { &self.ledger }
-    pub fn ledger_mut(&mut self) -> &mut PriceLedger { &mut self.ledger }
-    pub fn set_cash(&mut self, cash: f32) { self.cash = cash; }
-    pub fn current_cash(&self) -> f32 { self.cash }
-    pub fn deduct_cash(&mut self, amount: f32) { self.cash -= amount; }
+    pub fn pos(&self) -> Vec2 {
+        self.pos
+    }
+    pub fn speed(&self) -> f32 {
+        self.speed
+    }
+    pub fn max_cargo_volume(&self) -> f32 {
+        self.max_cargo_volume
+    }
+    pub fn archetype(&self) -> ShipArchetype {
+        self.archetype
+    }
+    pub fn docked_island(&self) -> Option<usize> {
+        self.docked_at
+    }
+    pub fn last_docked_island(&self) -> Option<usize> {
+        self.docked_at.or(self.last_docked_island_id)
+    }
+    pub fn target_island(&self) -> Option<usize> {
+        self.target_island_id
+    }
+    pub fn current_cargo(&self) -> Option<(Resource, f32)> {
+        self.cargo
+    }
+    pub fn has_no_cargo(&self) -> bool {
+        self.cargo.is_none()
+    }
+    pub fn just_sold_resource(&self) -> Option<Resource> {
+        self.just_sold_resource
+    }
+    pub fn cargo_changed_this_dock(&self) -> bool {
+        self.cargo_changed_this_dock
+    }
+    pub fn ledger(&self) -> &PriceLedger {
+        &self.ledger
+    }
+    pub fn ledger_mut(&mut self) -> &mut PriceLedger {
+        &mut self.ledger
+    }
+    pub fn set_cash(&mut self, cash: f32) {
+        self.cash = cash;
+    }
+    pub fn current_cash(&self) -> f32 {
+        self.cash
+    }
+    pub fn deduct_cash(&mut self, amount: f32) {
+        self.cash -= amount;
+    }
 
     pub fn cargo_volume_used(&self) -> f32 {
         self.total_cargo_volume()
@@ -797,7 +827,7 @@ impl ShipState {
 
         prices.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let mid = prices.len() / 2;
-        if prices.len() % 2 == 0 {
+        if prices.len().is_multiple_of(2) {
             (prices[mid - 1] + prices[mid]) * 0.5
         } else {
             prices[mid]
@@ -818,7 +848,7 @@ impl ShipState {
 
         cash_values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let mid = cash_values.len() / 2;
-        if cash_values.len() % 2 == 0 {
+        if cash_values.len().is_multiple_of(2) {
             Some((cash_values[mid - 1] + cash_values[mid]) * 0.5)
         } else {
             Some(cash_values[mid])
@@ -848,7 +878,8 @@ impl ShipState {
             }
 
             let observed_cash = (economy.cash * rng.gen_range(0.75..1.25)).max(0.0);
-            let observed_infra = (economy.infrastructure_level * rng.gen_range(0.90..1.10)).max(0.0);
+            let observed_infra =
+                (economy.infrastructure_level * rng.gen_range(0.90..1.10)).max(0.0);
             let age = rng.gen_range(40_u64..=420_u64);
             let observed_tick = current_tick.saturating_sub(age);
 
@@ -877,7 +908,11 @@ impl ShipState {
 
     // ── Spawning daughters ─────────────────────────────────────────────
 
-    pub fn spawn_daughter(&mut self, mutation_strength: f32, rng: &mut impl Rng) -> Option<ShipState> {
+    pub fn spawn_daughter(
+        &mut self,
+        mutation_strength: f32,
+        rng: &mut impl Rng,
+    ) -> Option<ShipState> {
         let num_islands = self.ledger.len();
         if num_islands == 0 {
             return None;
@@ -895,7 +930,8 @@ impl ShipState {
         let endowment = self.cash * 0.5;
         self.cash -= endowment;
 
-        let mut daughter = ShipState::new(self.pos, daughter_base_speed, num_islands, spawn_island_id);
+        let mut daughter =
+            ShipState::new(self.pos, daughter_base_speed, num_islands, spawn_island_id);
         daughter.cash = endowment;
         daughter.ledger = self.ledger.clone();
         daughter.route_memory = self.route_memory.clone();

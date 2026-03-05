@@ -57,7 +57,8 @@ fn handle_selection_input(
         if shift_down {
             // Next island.
             if island_count > 0 {
-                selection.selected_island_index = (selection.selected_island_index + 1) % island_count;
+                selection.selected_island_index =
+                    (selection.selected_island_index + 1) % island_count;
             }
         } else {
             // Next ship.
@@ -68,10 +69,7 @@ fn handle_selection_input(
     }
 }
 
-fn handle_time_scale_input(
-    keys: Res<ButtonInput<KeyCode>>,
-    mut time_scale: ResMut<TimeScale>,
-) {
+fn handle_time_scale_input(keys: Res<ButtonInput<KeyCode>>, mut time_scale: ResMut<TimeScale>) {
     if keys.just_pressed(KeyCode::Minus) {
         time_scale.0 = (time_scale.0 - TIME_SCALE_STEP).clamp(TIME_SCALE_MIN, TIME_SCALE_MAX);
     }

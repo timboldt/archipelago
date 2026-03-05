@@ -46,8 +46,7 @@ impl Plugin for SimulationPlugin {
                 movement::move_ships.in_set(SimPhase::Movement),
                 friction::apply_maritime_friction.in_set(SimPhase::Friction),
                 docking::process_docked_ships.in_set(SimPhase::Docking),
-                fleet::evolve_fleet
-                    .in_set(SimPhase::FleetEvolution),
+                fleet::evolve_fleet.in_set(SimPhase::FleetEvolution),
             ),
         );
     }

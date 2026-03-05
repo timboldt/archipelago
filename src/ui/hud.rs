@@ -2,7 +2,7 @@
 
 use bevy::prelude::*;
 
-use crate::components::{IslandMarker, ShipMarker, ShipProfile, ShipArchetype, RESOURCE_COUNT};
+use crate::components::{IslandMarker, ShipArchetype, ShipMarker, ShipProfile, RESOURCE_COUNT};
 use crate::island::IslandEconomy;
 use crate::resources::{FrameTimingsRes, PlanningTuningRes, PERF_HUD_UPDATE_INTERVAL_SECS};
 
@@ -109,12 +109,15 @@ pub fn update_hud(
     for (i, name) in resource_names.iter().enumerate() {
         hud_text.push_str(&format!("  {}: {:.0}\n", name, total_inventory[i]));
     }
-    hud_text.push_str(&format!("\nShips: {} (Cl/Fr/Sh: {}/{}/{})\n", ship_count, clipper_count, freighter_count, shorthaul_count));
+    hud_text.push_str(&format!(
+        "\nShips: {} (Cl/Fr/Sh: {}/{}/{})\n",
+        ship_count, clipper_count, freighter_count, shorthaul_count
+    ));
     hud_text.push_str(&format!("Population: {:.0}\n", total_population));
     hud_text.push_str(&format!("Cash: {:.0}\n", total_cash));
     hud_text.push_str(&format!("Industry: {:.2}\n", avg_infrastructure));
     hud_text.push_str(&format!("Friction x: {:.2}\n", friction_mult));
-    hud_text.push_str(&format!("\nPerf (ms)\n"));
+    hud_text.push_str("\nPerf (ms)\n");
     hud_text.push_str(&format!("  Economy: {:.2}\n", frame_timings.economy_ms));
     hud_text.push_str(&format!("  Movement: {:.2}\n", frame_timings.movement_ms));
     hud_text.push_str(&format!("  Dock: {:.2}\n", frame_timings.dock_ms));

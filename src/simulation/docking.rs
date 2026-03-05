@@ -4,8 +4,8 @@ use bevy::prelude::*;
 use std::time::Instant;
 
 use crate::components::{
-    IslandId, IslandMarker, MarketLedger, Position, ShipLedger, ShipMarker,
-    ShipMovement, ShipProfile, ShipTrading,
+    IslandId, IslandMarker, MarketLedger, Position, ShipLedger, ShipMarker, ShipMovement,
+    ShipProfile, ShipTrading,
 };
 use crate::island::IslandEconomy;
 use crate::resources::{
@@ -83,8 +83,10 @@ pub fn process_docked_ships(world: &mut World) {
     let mut all_departure_targets: Vec<(usize, usize)> = Vec::new();
     let mut bankrupt_entities: Vec<Entity> = Vec::new();
 
-    let route_departures_clone: Vec<Vec<f32>> =
-        world.resource::<RouteHistory>().recent_route_departures.clone();
+    let route_departures_clone: Vec<Vec<f32>> = world
+        .resource::<RouteHistory>()
+        .recent_route_departures
+        .clone();
 
     for island_id in 0..num_islands {
         let ship_entity_list = &docked_by_island[island_id];
@@ -98,8 +100,14 @@ pub fn process_docked_ships(world: &mut World) {
         };
 
         // Take island economy and ledger out of the ECS temporarily.
-        let mut island_economy = world.entity_mut(island_entity).take::<IslandEconomy>().unwrap();
-        let mut island_ledger_component = world.entity_mut(island_entity).take::<MarketLedger>().unwrap();
+        let mut island_economy = world
+            .entity_mut(island_entity)
+            .take::<IslandEconomy>()
+            .unwrap();
+        let mut island_ledger_component = world
+            .entity_mut(island_entity)
+            .take::<MarketLedger>()
+            .unwrap();
         let island_ledger = &mut island_ledger_component.0;
 
         island_economy.mark_seen(tick, island_ledger);
@@ -113,7 +121,8 @@ pub fn process_docked_ships(world: &mut World) {
             let trading = entity_ref.get::<ShipTrading>().unwrap();
             let profile = entity_ref.get::<ShipProfile>().unwrap();
             let ship_ledger_comp = entity_ref.get::<ShipLedger>().unwrap();
-            let ship = ShipState::from_components(pos, movement, trading, profile, ship_ledger_comp);
+            let ship =
+                ShipState::from_components(pos, movement, trading, profile, ship_ledger_comp);
             ships.push((ship_entity, ship));
         }
 
@@ -192,9 +201,7 @@ pub fn process_docked_ships(world: &mut World) {
             if sold_and_empty[local_idx] || bankrupt_local[local_idx] {
                 continue;
             }
-            let has_outbound_target = ship
-                .target_island()
-                .is_some_and(|t| t != island_id);
+            let has_outbound_target = ship.target_island().is_some_and(|t| t != island_id);
             if !ship.has_no_cargo() && !ship.cargo_changed_this_dock() && has_outbound_target {
                 continue;
             }
@@ -222,7 +229,9 @@ pub fn process_docked_ships(world: &mut World) {
 
         // Put island components back.
         world.entity_mut(island_entity).insert(island_economy);
-        world.entity_mut(island_entity).insert(island_ledger_component);
+        world
+            .entity_mut(island_entity)
+            .insert(island_ledger_component);
 
         // Update route departures.
         {

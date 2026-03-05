@@ -5,13 +5,13 @@
 
 pub mod spawn;
 
-use bevy::prelude::*;
 use ::rand::Rng;
+use bevy::prelude::*;
 use strum::IntoEnumIterator;
 
 use crate::components::{
-    bid_multiplier, ask_multiplier, Inventory, PriceEntry, PriceLedger, Resource,
-    BASE_COSTS, INVENTORY_CARRYING_CAPACITY, RESOURCE_COUNT,
+    ask_multiplier, bid_multiplier, Inventory, PriceEntry, PriceLedger, Resource, BASE_COSTS,
+    INVENTORY_CARRYING_CAPACITY, RESOURCE_COUNT,
 };
 
 const INITIAL_POPULATION_MIN: f32 = 45.0;

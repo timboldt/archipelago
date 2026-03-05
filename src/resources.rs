@@ -1,6 +1,7 @@
 //! All Bevy Resource definitions for the Archipelago simulation.
 
 use bevy::prelude::*;
+use bevy::sprite::ColorMaterial;
 
 use crate::ship::PlanningTuning;
 
@@ -34,19 +35,10 @@ pub struct IslandEntityMap(pub Vec<Entity>);
 pub struct IslandPositions(pub Vec<Vec2>);
 
 /// UI selection state.
-#[derive(Resource)]
+#[derive(Resource, Default)]
 pub struct SelectionState {
     pub selected_ship_index: usize,
     pub selected_island_index: usize,
-}
-
-impl Default for SelectionState {
-    fn default() -> Self {
-        Self {
-            selected_ship_index: 0,
-            selected_island_index: 0,
-        }
-    }
 }
 
 /// Performance HUD data.
@@ -67,3 +59,12 @@ pub struct FrameTimingsRes {
 }
 
 pub const PERF_HUD_UPDATE_INTERVAL_SECS: f32 = 1.0;
+
+/// Pre-created mesh/material handles for spawning ships at runtime.
+#[derive(Resource)]
+pub struct ShipMeshes {
+    pub clipper: Handle<Mesh>,
+    pub freighter: Handle<Mesh>,
+    pub shorthaul: Handle<Mesh>,
+    pub material: Handle<ColorMaterial>,
+}

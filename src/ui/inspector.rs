@@ -3,8 +3,8 @@
 use bevy::prelude::*;
 
 use crate::components::{
-    IslandId, IslandMarker, Resource, ShipArchetype,
-    ShipMarker, ShipMovement, ShipProfile, ShipTrading,
+    IslandId, IslandMarker, Resource, ShipArchetype, ShipMarker, ShipMovement, ShipProfile,
+    ShipTrading,
 };
 use crate::island::IslandEconomy;
 use crate::resources::SelectionState;
@@ -18,10 +18,7 @@ pub struct IslandInspectorText;
 pub fn update_ship_inspector(
     mut commands: Commands,
     mut inspector_q: Query<(Entity, &mut Text), With<ShipInspectorText>>,
-    ships: Query<
-        (Entity, &ShipMovement, &ShipTrading, &ShipProfile),
-        With<ShipMarker>,
-    >,
+    ships: Query<(Entity, &ShipMovement, &ShipTrading, &ShipProfile), With<ShipMarker>>,
     selection: Res<SelectionState>,
     ship_count: Query<(), With<ShipMarker>>,
 ) {
@@ -89,10 +86,16 @@ pub fn update_ship_inspector(
         .map(|(r, a)| a.max(0.0) * r.volume_per_unit())
         .unwrap_or(0.0);
 
-    let (_, _, labor_mult, _) = crate::ship::ShipState::profile_multipliers_static(profile.archetype);
-    let (_, _, _, wear_mult) = crate::ship::ShipState::profile_multipliers_static(profile.archetype);
-    let labor_rate = crate::ship::BASE_LABOR_RATE_PUB * labor_mult * (1.20 - 0.35 * profile.efficiency_rating).clamp(0.70, 1.15);
-    let wear_rate = crate::ship::BASE_WEAR_RATE_PUB * wear_mult * (1.20 - 0.40 * profile.efficiency_rating).clamp(0.65, 1.15);
+    let (_, _, labor_mult, _) =
+        crate::ship::ShipState::profile_multipliers_static(profile.archetype);
+    let (_, _, _, wear_mult) =
+        crate::ship::ShipState::profile_multipliers_static(profile.archetype);
+    let labor_rate = crate::ship::BASE_LABOR_RATE_PUB
+        * labor_mult
+        * (1.20 - 0.35 * profile.efficiency_rating).clamp(0.70, 1.15);
+    let wear_rate = crate::ship::BASE_WEAR_RATE_PUB
+        * wear_mult
+        * (1.20 - 0.40 * profile.efficiency_rating).clamp(0.65, 1.15);
 
     let mut s = String::new();
     s.push_str("Selected Ship\n");
@@ -100,8 +103,14 @@ pub fn update_ship_inspector(
     s.push_str(&format!("  Archetype: {}\n", archetype_label));
     s.push_str(&format!("  {}\n", status));
     s.push_str(&format!("  Speed: {:.1}\n", movement.speed));
-    s.push_str(&format!("  Cargo vol: {:.1}/{:.1}\n", cargo_vol_used, profile.max_cargo_volume));
-    s.push_str(&format!("  Labor/Wear: {:.4}/{:.4}\n", labor_rate, wear_rate));
+    s.push_str(&format!(
+        "  Cargo vol: {:.1}/{:.1}\n",
+        cargo_vol_used, profile.max_cargo_volume
+    ));
+    s.push_str(&format!(
+        "  Labor/Wear: {:.4}/{:.4}\n",
+        labor_rate, wear_rate
+    ));
     s.push_str(&format!("  Cash: {:.1}\n", trading.cash));
     s.push_str(&format!("  {}\n", cargo_text));
     s.push_str("  [ / ]: Prev / Next ship\n");
@@ -158,10 +167,20 @@ pub fn update_island_inspector(
 
     let mut s = String::new();
     s.push_str("Selected Island\n");
-    s.push_str(&format!("  Island: {}/{}\n", selected_idx + 1, total_islands));
-    s.push_str(&format!("  Population: {:.0}\n", economy.population.max(0.0)));
+    s.push_str(&format!(
+        "  Island: {}/{}\n",
+        selected_idx + 1,
+        total_islands
+    ));
+    s.push_str(&format!(
+        "  Population: {:.0}\n",
+        economy.population.max(0.0)
+    ));
     s.push_str(&format!("  Cash: {:.0}\n", economy.cash.max(0.0)));
-    s.push_str(&format!("  Infrastructure: {:.2}\n", economy.infrastructure_level.max(0.0)));
+    s.push_str(&format!(
+        "  Infrastructure: {:.2}\n",
+        economy.infrastructure_level.max(0.0)
+    ));
     s.push_str(&format!(
         "  Inv G/T/I/To/S: {:.0}/{:.0}/{:.0}/{:.0}/{:.0}\n",
         economy.inventory[Resource::Grain.idx()].max(0.0),

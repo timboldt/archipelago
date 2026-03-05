@@ -3,11 +3,11 @@
 use bevy::prelude::*;
 
 use crate::components::{
-    IslandId, IslandMarker, Position, ShipLedger, ShipMarker, ShipMovement,
+    IslandId, IslandMarker, Position, ShipArchetype, ShipLedger, ShipMarker, ShipMovement,
     ShipProfile, ShipTrading,
 };
 use crate::island::IslandEconomy;
-use crate::resources::{PlanningTuningRes, SimulationTick};
+use crate::resources::{PlanningTuningRes, ShipMeshes, SimulationTick};
 use crate::ship::{ShipState, STARTING_CASH};
 
 const SCUTTLE_THRESHOLD_MULTIPLIER: f32 = 0.35;
@@ -19,7 +19,7 @@ const MUTATION_STRENGTH: f32 = 0.05;
 
 pub fn evolve_fleet(world: &mut World) {
     let tick = world.resource::<SimulationTick>().0;
-    if tick % LIFECYCLE_CHECK_INTERVAL_TICKS != 0 {
+    if !tick.is_multiple_of(LIFECYCLE_CHECK_INTERVAL_TICKS) {
         return;
     }
 
@@ -123,9 +123,20 @@ pub fn evolve_fleet(world: &mut World) {
     }
 
     // Spawn daughters.
+    let ship_meshes = world.resource::<ShipMeshes>();
+    let clipper_mesh = ship_meshes.clipper.clone();
+    let freighter_mesh = ship_meshes.freighter.clone();
+    let shorthaul_mesh = ship_meshes.shorthaul.clone();
+    let ship_material = ship_meshes.material.clone();
+
     for daughter in daughters {
         let daughter_pos = daughter.pos();
         let (movement, trading, profile, ship_ledger) = daughter.into_components();
+        let mesh = match profile.archetype {
+            ShipArchetype::Clipper => clipper_mesh.clone(),
+            ShipArchetype::Freighter => freighter_mesh.clone(),
+            ShipArchetype::Shorthaul => shorthaul_mesh.clone(),
+        };
         world.spawn((
             ShipMarker,
             Position(daughter_pos),
@@ -133,6 +144,8 @@ pub fn evolve_fleet(world: &mut World) {
             trading,
             profile,
             ship_ledger,
+            Mesh2d(mesh),
+            MeshMaterial2d(ship_material.clone()),
             Transform::from_translation(daughter_pos.extend(1.0)),
         ));
     }

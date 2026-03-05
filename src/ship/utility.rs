@@ -169,8 +169,9 @@ impl ShipState {
         };
 
         let industrial_bonus = if resource == Resource::Iron || resource == Resource::Timber {
-            let infra_excess =
-                (self.ledger()[target_id].infrastructure_level - INDUSTRIAL_INFRA_THRESHOLD).max(0.0);
+            let infra_excess = (self.ledger()[target_id].infrastructure_level
+                - INDUSTRIAL_INFRA_THRESHOLD)
+                .max(0.0);
             (infra_excess * INDUSTRIAL_INPUT_BONUS_PER_INFRA).min(INDUSTRIAL_INPUT_BONUS_CAP)
         } else {
             0.0

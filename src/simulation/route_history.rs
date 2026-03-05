@@ -5,10 +5,7 @@ use bevy::prelude::*;
 use crate::components::{IslandId, IslandMarker, Position};
 use crate::resources::{IslandPositions, RouteHistory, SimulationTick};
 
-pub fn advance_tick(
-    mut tick: ResMut<SimulationTick>,
-    mut route_history: ResMut<RouteHistory>,
-) {
+pub fn advance_tick(mut tick: ResMut<SimulationTick>, mut route_history: ResMut<RouteHistory>) {
     tick.0 = tick.0.saturating_add(1);
 
     // Expire route-history contributions that rolled out of the window.
