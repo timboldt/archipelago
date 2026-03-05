@@ -10,8 +10,8 @@ use bevy::prelude::*;
 use strum::IntoEnumIterator;
 
 use crate::components::{
-    ask_multiplier, bid_multiplier, Inventory, PriceEntry, PriceLedger, Resource, BASE_COSTS,
-    INVENTORY_CARRYING_CAPACITY, RESOURCE_COUNT,
+    ask_multiplier, bid_multiplier, Commodity, Inventory, PriceEntry, PriceLedger, BASE_COSTS,
+    COMMODITY_COUNT, INVENTORY_CARRYING_CAPACITY,
 };
 
 const INITIAL_POPULATION_MIN: f32 = 45.0;
@@ -71,37 +71,37 @@ pub struct IslandEconomy {
     pub resource_capacity: Inventory,
     pub population_capacity: f32,
     pub infrastructure_capacity: f32,
-    pub local_prices: [f32; RESOURCE_COUNT],
+    pub local_prices: [f32; COMMODITY_COUNT],
 }
 
 impl IslandEconomy {
     /// Creates a new island economy with randomized capacities, production, and initial state.
     pub fn new(id: usize, num_islands: usize, rng: &mut impl Rng) -> (Self, PriceLedger) {
-        let mut inventory = [0.0_f32; RESOURCE_COUNT];
-        let mut production_rates = [0.0_f32; RESOURCE_COUNT];
-        let mut consumption_rates = [0.0_f32; RESOURCE_COUNT];
+        let mut inventory = [0.0_f32; COMMODITY_COUNT];
+        let mut production_rates = [0.0_f32; COMMODITY_COUNT];
+        let mut consumption_rates = [0.0_f32; COMMODITY_COUNT];
 
-        for resource in Resource::iter() {
+        for resource in Commodity::iter() {
             let index = resource.idx();
             inventory[index] = rng.gen_range(25.0..125.0);
             production_rates[index] = match resource {
-                Resource::Tools => 0.0,
-                Resource::Grain => rng.gen_range(0.8..2.6),
-                Resource::Timber => {
+                Commodity::Tools => 0.0,
+                Commodity::Grain => rng.gen_range(0.8..2.6),
+                Commodity::Timber => {
                     if rng.gen_bool(SPECIALIZATION_ZERO_PROBABILITY as f64) {
                         0.0
                     } else {
                         rng.gen_range(0.7..2.4)
                     }
                 }
-                Resource::Iron => {
+                Commodity::Iron => {
                     if rng.gen_bool(SPECIALIZATION_ZERO_PROBABILITY as f64) {
                         0.0
                     } else {
                         rng.gen_range(0.35..1.6)
                     }
                 }
-                Resource::Spices => {
+                Commodity::Spices => {
                     if rng.gen_bool(SPICE_SPECIALIZATION_ZERO_PROBABILITY as f64) {
                         0.0
                     } else {
@@ -110,26 +110,26 @@ impl IslandEconomy {
                 }
             };
             consumption_rates[index] = match resource {
-                Resource::Grain => rng.gen_range(0.8..2.2),
-                Resource::Tools => rng.gen_range(0.1..0.5),
-                Resource::Spices => rng.gen_range(0.02..0.16),
-                Resource::Timber | Resource::Iron => rng.gen_range(0.05..0.4),
+                Commodity::Grain => rng.gen_range(0.8..2.2),
+                Commodity::Tools => rng.gen_range(0.1..0.5),
+                Commodity::Spices => rng.gen_range(0.02..0.16),
+                Commodity::Timber | Commodity::Iron => rng.gen_range(0.05..0.4),
             };
         }
 
-        if production_rates[Resource::Timber.idx()] <= 0.0
-            && production_rates[Resource::Iron.idx()] <= 0.0
+        if production_rates[Commodity::Timber.idx()] <= 0.0
+            && production_rates[Commodity::Iron.idx()] <= 0.0
         {
             if rng.gen_bool(0.7) {
-                production_rates[Resource::Timber.idx()] = rng.gen_range(0.5..1.4);
+                production_rates[Commodity::Timber.idx()] = rng.gen_range(0.5..1.4);
             } else {
-                production_rates[Resource::Iron.idx()] = rng.gen_range(0.5..1.4);
+                production_rates[Commodity::Iron.idx()] = rng.gen_range(0.5..1.4);
             }
         }
 
         let size_factor = rng.gen_range(ISLAND_SIZE_FACTOR_MIN..ISLAND_SIZE_FACTOR_MAX);
-        let mut resource_capacity = [0.0_f32; RESOURCE_COUNT];
-        for resource in Resource::iter() {
+        let mut resource_capacity = [0.0_f32; COMMODITY_COUNT];
+        for resource in Commodity::iter() {
             let idx = resource.idx();
             let specialization_roll = rng.gen_range(0.80..1.25);
             resource_capacity[idx] =
@@ -141,16 +141,16 @@ impl IslandEconomy {
             .clamp(0.9, MAX_INFRASTRUCTURE_LEVEL);
 
         let focus_resource = match rng.gen_range(0..4) {
-            0 => Resource::Grain,
-            1 => Resource::Timber,
-            2 => Resource::Iron,
-            _ => Resource::Spices,
+            0 => Commodity::Grain,
+            1 => Commodity::Timber,
+            2 => Commodity::Iron,
+            _ => Commodity::Spices,
         };
         for resource in [
-            Resource::Grain,
-            Resource::Timber,
-            Resource::Iron,
-            Resource::Spices,
+            Commodity::Grain,
+            Commodity::Timber,
+            Commodity::Iron,
+            Commodity::Spices,
         ] {
             let index = resource.idx();
             if resource == focus_resource {
@@ -173,13 +173,13 @@ impl IslandEconomy {
             resource_capacity,
             population_capacity,
             infrastructure_capacity,
-            local_prices: [0.0; RESOURCE_COUNT],
+            local_prices: [0.0; COMMODITY_COUNT],
         };
 
         let mut ledger = vec![
             PriceEntry {
-                prices: [0.0; RESOURCE_COUNT],
-                inventories: [0.0; RESOURCE_COUNT],
+                prices: [0.0; COMMODITY_COUNT],
+                inventories: [0.0; COMMODITY_COUNT],
                 cash: 0.0,
                 infrastructure_level: 0.0,
                 tick_updated: 0,
@@ -193,7 +193,7 @@ impl IslandEconomy {
     }
 
     pub fn produce_consume_and_price(&mut self, dt: f32, tick: u64, ledger: &mut PriceLedger) {
-        let grain_idx = Resource::Grain.idx();
+        let grain_idx = Commodity::Grain.idx();
         let grain_stability_target = self.population * GRAIN_PER_CAPITA_STABILITY;
         let grain_balance =
             (self.inventory[grain_idx] - grain_stability_target) / (grain_stability_target + 1.0);
@@ -211,21 +211,21 @@ impl IslandEconomy {
             .population
             .clamp(MIN_POPULATION, self.population_capacity.max(MIN_POPULATION));
 
-        for resource in Resource::iter() {
+        for resource in Commodity::iter() {
             let index = resource.idx();
             let inventory = self.inventory[index];
             let capacity = self.resource_capacity[index].max(1.0);
             let logistic_factor = (1.0 - (inventory / capacity)).clamp(0.0, 1.0);
 
-            if resource != Resource::Tools {
+            if resource != Commodity::Tools {
                 let tools_boost = (1.0
-                    + self.inventory[Resource::Tools.idx()] * TOOLS_PRODUCTIVITY_SCALE)
+                    + self.inventory[Commodity::Tools.idx()] * TOOLS_PRODUCTIVITY_SCALE)
                     .clamp(1.0, TOOLS_PRODUCTIVITY_CAP);
                 let mut extraction =
                     self.production_rates[index] * self.population * logistic_factor * dt;
-                if resource == Resource::Grain {
+                if resource == Commodity::Grain {
                     extraction *= GRAIN_EXTRACTION_BONUS;
-                } else if resource == Resource::Timber {
+                } else if resource == Commodity::Timber {
                     extraction *= TIMBER_EXTRACTION_BONUS;
                 }
                 extraction *= tools_boost;
@@ -234,7 +234,7 @@ impl IslandEconomy {
             }
 
             let demand = self.consumption_rates[index] * self.population * dt;
-            let effective_demand = if resource == Resource::Tools {
+            let effective_demand = if resource == Commodity::Tools {
                 demand * TOOLS_CONSUMPTION_SCALE
             } else {
                 demand
@@ -243,9 +243,9 @@ impl IslandEconomy {
             self.inventory[index] = self.inventory[index].max(0.0);
         }
 
-        let iron_idx = Resource::Iron.idx();
-        let timber_idx = Resource::Timber.idx();
-        let tools_idx = Resource::Tools.idx();
+        let iron_idx = Commodity::Iron.idx();
+        let timber_idx = Commodity::Timber.idx();
+        let tools_idx = Commodity::Tools.idx();
 
         let labor_multiplier = (self.population * INDUSTRIAL_LABOR_SCALING).clamp(0.25, 8.0);
         let local_tools_per_1k_pop = if self.population > 0.0 {
@@ -298,10 +298,10 @@ impl IslandEconomy {
     }
 
     fn reset_survival_focus(&mut self) {
-        let grain_idx = Resource::Grain.idx();
-        let timber_idx = Resource::Timber.idx();
-        let iron_idx = Resource::Iron.idx();
-        let spices_idx = Resource::Spices.idx();
+        let grain_idx = Commodity::Grain.idx();
+        let timber_idx = Commodity::Timber.idx();
+        let iron_idx = Commodity::Iron.idx();
+        let spices_idx = Commodity::Spices.idx();
 
         self.production_rates[grain_idx] =
             self.production_rates[grain_idx].max(GRAIN_SURVIVAL_PRODUCTION_FLOOR);
@@ -317,7 +317,7 @@ impl IslandEconomy {
 
     /// Recomputes local scarcity-adjusted prices and updates this island's self ledger entry.
     pub fn recompute_local_prices_with_ledger(&mut self, tick: u64, ledger: &mut PriceLedger) {
-        for resource in Resource::iter() {
+        for resource in Commodity::iter() {
             let index = resource.idx();
             let inventory = self.inventory[index].max(0.0);
             let scarcity_pressure = (SCARCITY_REFERENCE / (inventory + 1.0)).ln_1p();
@@ -344,7 +344,7 @@ impl IslandEconomy {
     /// Returns `(filled_amount, total_value_paid)`.
     pub fn sell_to_island(
         &mut self,
-        resource: Resource,
+        resource: Commodity,
         amount: f32,
         market_spread: f32,
     ) -> (f32, f32) {
@@ -367,7 +367,7 @@ impl IslandEconomy {
     /// Returns `(filled_amount, total_cost_charged)`.
     pub fn buy_from_island(
         &mut self,
-        resource: Resource,
+        resource: Commodity,
         requested_amount: f32,
         market_spread: f32,
     ) -> (f32, f32) {
@@ -399,12 +399,12 @@ impl IslandEconomy {
     }
 
     /// Returns the island bid price for `resource` after applying spread.
-    pub fn bid_price(&self, resource: Resource, market_spread: f32) -> f32 {
+    pub fn bid_price(&self, resource: Commodity, market_spread: f32) -> f32 {
         self.local_prices[resource.idx()] * bid_multiplier(market_spread)
     }
 
     /// Returns the island ask price for `resource` after applying spread.
-    pub fn ask_price(&self, resource: Resource, market_spread: f32) -> f32 {
+    pub fn ask_price(&self, resource: Commodity, market_spread: f32) -> f32 {
         self.local_prices[resource.idx()] * ask_multiplier(market_spread)
     }
 
@@ -452,7 +452,7 @@ mod tests {
         approx_eq(entry.cash, economy.cash);
         approx_eq(entry.infrastructure_level, economy.infrastructure_level);
         assert_eq!(entry.tick_updated, 42);
-        assert!(economy.local_prices[Resource::Grain.idx()] > BASE_COSTS[Resource::Grain.idx()]);
+        assert!(economy.local_prices[Commodity::Grain.idx()] > BASE_COSTS[Commodity::Grain.idx()]);
     }
 
     #[test]
@@ -460,16 +460,16 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(11);
         let (mut economy, _ledger) = IslandEconomy::new(0, 1, &mut rng);
         economy.cash = 10.0;
-        economy.local_prices[Resource::Tools.idx()] = 120.0;
-        let starting_tools = economy.inventory[Resource::Tools.idx()];
+        economy.local_prices[Commodity::Tools.idx()] = 120.0;
+        let starting_tools = economy.inventory[Commodity::Tools.idx()];
         let expected_price = 120.0 * (1.0 - 0.1 * 0.5);
 
-        let (filled, paid) = economy.sell_to_island(Resource::Tools, 1.0, 0.1);
+        let (filled, paid) = economy.sell_to_island(Commodity::Tools, 1.0, 0.1);
 
         approx_eq(filled, 1.0);
         approx_eq(paid, expected_price);
         approx_eq(
-            economy.inventory[Resource::Tools.idx()],
+            economy.inventory[Commodity::Tools.idx()],
             starting_tools + 1.0,
         );
         assert!(economy.cash < 0.0);
@@ -479,15 +479,15 @@ mod tests {
     fn buy_from_island_is_inventory_limited() {
         let mut rng = StdRng::seed_from_u64(19);
         let (mut economy, _ledger) = IslandEconomy::new(0, 1, &mut rng);
-        economy.inventory[Resource::Grain.idx()] = 2.0;
-        economy.local_prices[Resource::Grain.idx()] = 50.0;
+        economy.inventory[Commodity::Grain.idx()] = 2.0;
+        economy.local_prices[Commodity::Grain.idx()] = 50.0;
         let starting_cash = economy.cash;
 
-        let (filled, cost) = economy.buy_from_island(Resource::Grain, 5.0, 0.1);
+        let (filled, cost) = economy.buy_from_island(Commodity::Grain, 5.0, 0.1);
 
         approx_eq(filled, 2.0);
         approx_eq(cost, 2.0 * 50.0 * 1.05);
-        approx_eq(economy.inventory[Resource::Grain.idx()], 0.0);
+        approx_eq(economy.inventory[Commodity::Grain.idx()], 0.0);
         approx_eq(economy.cash, starting_cash + cost);
     }
 

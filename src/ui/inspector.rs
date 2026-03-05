@@ -3,7 +3,7 @@
 use bevy::prelude::*;
 
 use crate::components::{
-    IslandId, IslandMarker, Resource, ShipArchetype, ShipMarker, ShipMovement, ShipProfile,
+    Commodity, IslandId, IslandMarker, ShipArchetype, ShipMarker, ShipMovement, ShipProfile,
     ShipTrading,
 };
 use crate::island::IslandEconomy;
@@ -183,19 +183,19 @@ pub fn update_island_inspector(
     ));
     s.push_str(&format!(
         "  Inv G/T/I/To/S: {:.0}/{:.0}/{:.0}/{:.0}/{:.0}\n",
-        economy.inventory[Resource::Grain.idx()].max(0.0),
-        economy.inventory[Resource::Timber.idx()].max(0.0),
-        economy.inventory[Resource::Iron.idx()].max(0.0),
-        economy.inventory[Resource::Tools.idx()].max(0.0),
-        economy.inventory[Resource::Spices.idx()].max(0.0),
+        economy.inventory[Commodity::Grain.idx()].max(0.0),
+        economy.inventory[Commodity::Timber.idx()].max(0.0),
+        economy.inventory[Commodity::Iron.idx()].max(0.0),
+        economy.inventory[Commodity::Tools.idx()].max(0.0),
+        economy.inventory[Commodity::Spices.idx()].max(0.0),
     ));
     s.push_str(&format!(
         "  Price G/T/I/To/S: {:.0}/{:.0}/{:.0}/{:.0}/{:.0}\n",
-        economy.local_prices[Resource::Grain.idx()].max(0.0),
-        economy.local_prices[Resource::Timber.idx()].max(0.0),
-        economy.local_prices[Resource::Iron.idx()].max(0.0),
-        economy.local_prices[Resource::Tools.idx()].max(0.0),
-        economy.local_prices[Resource::Spices.idx()].max(0.0),
+        economy.local_prices[Commodity::Grain.idx()].max(0.0),
+        economy.local_prices[Commodity::Timber.idx()].max(0.0),
+        economy.local_prices[Commodity::Iron.idx()].max(0.0),
+        economy.local_prices[Commodity::Tools.idx()].max(0.0),
+        economy.local_prices[Commodity::Spices.idx()].max(0.0),
     ));
     s.push_str("  { / }: Prev / Next island\n");
 

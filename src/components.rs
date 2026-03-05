@@ -4,22 +4,22 @@ use bevy::prelude::*;
 
 use crate::island::IslandEconomy;
 
-/// Number of fixed resources in the simulation economy.
-pub const RESOURCE_COUNT: usize = 5;
+/// Number of fixed commodities in the simulation economy.
+pub const COMMODITY_COUNT: usize = 5;
 /// Base (pre-scarcity) unit value per resource.
-pub const BASE_COSTS: [f32; RESOURCE_COUNT] = [20.0, 30.0, 45.0, 120.0, 180.0];
-/// Nominal per-resource storage baseline used during island initialization.
+pub const BASE_COSTS: [f32; COMMODITY_COUNT] = [20.0, 30.0, 45.0, 120.0, 180.0];
+/// Nominal per-commodity storage baseline used during island initialization.
 pub const INVENTORY_CARRYING_CAPACITY: f32 = 180.0;
 
-/// Fixed-size inventory vector indexed by [`Resource::idx`].
-pub type Inventory = [f32; RESOURCE_COUNT];
+/// Fixed-size inventory vector indexed by [`Commodity::idx`].
+pub type Inventory = [f32; COMMODITY_COUNT];
 
 use strum_macros::EnumIter;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, EnumIter)]
 #[repr(usize)]
-/// Resource kinds traded and consumed across islands and ships.
-pub enum Resource {
+/// Commodity kinds traded and consumed across islands and ships.
+pub enum Commodity {
     Grain,
     Timber,
     Iron,
@@ -27,7 +27,7 @@ pub enum Resource {
     Spices,
 }
 
-impl Resource {
+impl Commodity {
     /// Returns the fixed array index for this resource.
     pub fn idx(self) -> usize {
         self as usize
@@ -36,11 +36,11 @@ impl Resource {
     /// Returns cargo-space volume used by one unit of this resource.
     pub fn volume_per_unit(self) -> f32 {
         match self {
-            Resource::Grain => 1.0,
-            Resource::Timber => 0.85,
-            Resource::Iron => 0.75,
-            Resource::Tools => 0.2,
-            Resource::Spices => 0.2,
+            Commodity::Grain => 1.0,
+            Commodity::Timber => 0.85,
+            Commodity::Iron => 0.75,
+            Commodity::Tools => 0.2,
+            Commodity::Spices => 0.2,
         }
     }
 }
@@ -49,9 +49,9 @@ impl Resource {
 /// Snapshot of one island market for ship/island local ledgers.
 pub struct PriceEntry {
     /// Observed local prices by resource.
-    pub prices: [f32; RESOURCE_COUNT],
+    pub prices: [f32; COMMODITY_COUNT],
     /// Observed local inventories by resource.
-    pub inventories: [f32; RESOURCE_COUNT],
+    pub inventories: [f32; COMMODITY_COUNT],
     /// Observed island cash/liquidity.
     pub cash: f32,
     /// Observed island infrastructure level.
@@ -135,14 +135,14 @@ pub struct ShipMovement {
 pub struct ShipTrading {
     pub docked_at: Option<usize>,
     pub last_docked_island_id: Option<usize>,
-    pub cargo: Option<(Resource, f32)>,
+    pub cargo: Option<(Commodity, f32)>,
     pub cash: f32,
     pub labor_debt: f32,
     pub wear_debt: f32,
     pub purchase_price: f32,
     pub planned_target_after_load: Option<usize>,
     pub cargo_changed_this_dock: bool,
-    pub just_sold_resource: Option<Resource>,
+    pub just_sold_resource: Option<Commodity>,
     pub last_dock_action: DockAction,
     pub dock_idle_ticks: u32,
 }
@@ -166,13 +166,13 @@ pub struct ShipLedger {
 // ── Convenience: bundled ship queries ──────────────────────────────────
 
 impl IslandEconomy {
-    pub fn resource_label(resource: Resource) -> &'static str {
+    pub fn resource_label(resource: Commodity) -> &'static str {
         match resource {
-            Resource::Grain => "Grain",
-            Resource::Timber => "Timber",
-            Resource::Iron => "Iron",
-            Resource::Tools => "Tools",
-            Resource::Spices => "Spices",
+            Commodity::Grain => "Grain",
+            Commodity::Timber => "Timber",
+            Commodity::Iron => "Iron",
+            Commodity::Tools => "Tools",
+            Commodity::Spices => "Spices",
         }
     }
 }

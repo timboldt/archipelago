@@ -2,7 +2,7 @@
 
 use bevy::prelude::*;
 
-use crate::components::{IslandMarker, ShipArchetype, ShipMarker, ShipProfile, RESOURCE_COUNT};
+use crate::components::{IslandMarker, ShipArchetype, ShipMarker, ShipProfile, COMMODITY_COUNT};
 use crate::island::IslandEconomy;
 use crate::resources::{FrameTimingsRes, PlanningTuningRes, PERF_HUD_UPDATE_INTERVAL_SECS};
 
@@ -43,7 +43,7 @@ pub fn update_hud(
     };
 
     // Aggregate island stats.
-    let mut total_inventory = [0.0_f32; RESOURCE_COUNT];
+    let mut total_inventory = [0.0_f32; COMMODITY_COUNT];
     let mut total_population = 0.0_f32;
     let mut total_cash = 0.0_f32;
     let mut total_infrastructure = 0.0_f32;

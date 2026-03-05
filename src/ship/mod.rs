@@ -12,8 +12,8 @@ use bevy::prelude::{Mut, Vec2};
 use strum::IntoEnumIterator;
 
 use crate::components::{
-    ask_multiplier, bid_multiplier, DockAction, PriceEntry, PriceLedger, Resource, ShipArchetype,
-    ShipLedger, ShipMovement, ShipProfile, ShipTrading, StrategyGenes, RESOURCE_COUNT,
+    ask_multiplier, bid_multiplier, Commodity, DockAction, PriceEntry, PriceLedger, ShipArchetype,
+    ShipLedger, ShipMovement, ShipProfile, ShipTrading, StrategyGenes, COMMODITY_COUNT,
 };
 use crate::island::IslandEconomy;
 
@@ -89,7 +89,7 @@ pub struct ShipState {
     target_island_id: Option<usize>,
     docked_at: Option<usize>,
     last_docked_island_id: Option<usize>,
-    cargo: Option<(Resource, f32)>,
+    cargo: Option<(Commodity, f32)>,
     cash: f32,
     labor_debt: f32,
     wear_debt: f32,
@@ -100,7 +100,7 @@ pub struct ShipState {
     planned_target_after_load: Option<usize>,
     cargo_changed_this_dock: bool,
     last_step_distance: f32,
-    just_sold_resource: Option<Resource>,
+    just_sold_resource: Option<Commodity>,
     last_dock_action: DockAction,
     dock_idle_ticks: u32,
 }
@@ -132,8 +132,8 @@ impl ShipState {
             wear_debt: 0.0,
             ledger: vec![
                 PriceEntry {
-                    prices: [0.0; RESOURCE_COUNT],
-                    inventories: [0.0; RESOURCE_COUNT],
+                    prices: [0.0; COMMODITY_COUNT],
+                    inventories: [0.0; COMMODITY_COUNT],
                     cash: 0.0,
                     infrastructure_level: 0.0,
                     tick_updated: 0,
@@ -210,13 +210,13 @@ impl ShipState {
     pub fn target_island(&self) -> Option<usize> {
         self.target_island_id
     }
-    pub fn current_cargo(&self) -> Option<(Resource, f32)> {
+    pub fn current_cargo(&self) -> Option<(Commodity, f32)> {
         self.cargo
     }
     pub fn has_no_cargo(&self) -> bool {
         self.cargo.is_none()
     }
-    pub fn just_sold_resource(&self) -> Option<Resource> {
+    pub fn just_sold_resource(&self) -> Option<Commodity> {
         self.just_sold_resource
     }
     pub fn cargo_changed_this_dock(&self) -> bool {
@@ -278,7 +278,7 @@ impl ShipState {
         (self.max_cargo_volume - self.total_cargo_volume()).max(0.0)
     }
 
-    fn max_units_for_trade_action(&self, resource: Resource) -> f32 {
+    fn max_units_for_trade_action(&self, resource: Commodity) -> f32 {
         TRADE_ACTION_VOLUME / resource.volume_per_unit().max(0.01)
     }
 
@@ -526,7 +526,7 @@ impl ShipState {
     pub fn trade_load_if_empty(
         &mut self,
         island: &mut IslandEconomy,
-        exclude: Option<Resource>,
+        exclude: Option<Commodity>,
         context: &LoadPlanningContext<'_>,
     ) -> DockAction {
         if self.last_dock_action != DockAction::None {
@@ -538,7 +538,7 @@ impl ShipState {
             return self.last_dock_action;
         }
 
-        let mut chosen_resource: Option<Resource> = None;
+        let mut chosen_resource: Option<Commodity> = None;
         let mut chosen_target: Option<usize> = None;
         let mut chosen_local_price = 0.0;
         let mut best_utility = f32::NEG_INFINITY;
@@ -550,7 +550,7 @@ impl ShipState {
             outbound_recent_departures: context.outbound_recent_departures,
         };
 
-        for resource in Resource::iter() {
+        for resource in Commodity::iter() {
             if Some(resource) == exclude {
                 continue;
             }
@@ -772,7 +772,7 @@ impl ShipState {
             .ledger
             .get(current_island_id)
             .map(|entry| entry.prices)
-            .unwrap_or([0.0; RESOURCE_COUNT]);
+            .unwrap_or([0.0; COMMODITY_COUNT]);
 
         for target_id in 0..self.ledger.len() {
             if target_id == current_island_id {
@@ -780,7 +780,7 @@ impl ShipState {
             }
 
             let mut best_resource_utility = f32::NEG_INFINITY;
-            for resource in Resource::iter() {
+            for resource in Commodity::iter() {
                 let buy_price =
                     current_prices[resource.idx()] * ask_multiplier(tuning.market_spread);
                 let lot_size = self
@@ -812,7 +812,7 @@ impl ShipState {
         }
     }
 
-    fn median_price_for_resource(&self, resource: Resource) -> f32 {
+    fn median_price_for_resource(&self, resource: Commodity) -> f32 {
         let index = resource.idx();
         let mut prices: Vec<f32> = self
             .ledger
@@ -866,10 +866,10 @@ impl ShipState {
     ) {
         let count = self.ledger.len().min(islands.len());
         for (island_id, (_, economy, _)) in islands.iter().enumerate().take(count) {
-            let mut prices = [0.0; RESOURCE_COUNT];
-            let mut inventories = [0.0; RESOURCE_COUNT];
+            let mut prices = [0.0; COMMODITY_COUNT];
+            let mut inventories = [0.0; COMMODITY_COUNT];
 
-            for resource in Resource::iter() {
+            for resource in Commodity::iter() {
                 let idx = resource.idx();
                 let price_noise = rng.gen_range(0.82..1.18);
                 let inventory_noise = rng.gen_range(0.70..1.30);
@@ -1169,8 +1169,8 @@ mod tests {
         ship.archetype = ShipArchetype::Clipper;
         ship.recompute_operational_traits();
         ship.max_cargo_volume = 60.0;
-        ship.ledger[1].prices[Resource::Grain.idx()] = 400.0;
-        ship.ledger[1].inventories[Resource::Grain.idx()] = 0.0;
+        ship.ledger[1].prices[Commodity::Grain.idx()] = 400.0;
+        ship.ledger[1].inventories[Commodity::Grain.idx()] = 0.0;
         ship.ledger[1].cash = 0.0;
         ship.ledger[1].tick_updated = 100;
         ship.ledger[1].last_seen_tick = 100;
@@ -1204,8 +1204,8 @@ mod tests {
         ship.archetype = ShipArchetype::Clipper;
         ship.recompute_operational_traits();
         ship.max_cargo_volume = 20.0;
-        ship.ledger[1].prices[Resource::Grain.idx()] = 90.0;
-        ship.ledger[1].inventories[Resource::Grain.idx()] = 0.0;
+        ship.ledger[1].prices[Commodity::Grain.idx()] = 90.0;
+        ship.ledger[1].inventories[Commodity::Grain.idx()] = 0.0;
         ship.ledger[1].cash = 100_000.0;
         ship.ledger[1].tick_updated = 200;
         ship.ledger[1].last_seen_tick = 200;
@@ -1230,7 +1230,7 @@ mod tests {
     #[test]
     fn plan_next_island_uses_planned_target_for_loaded_ship() {
         let mut ship = ShipState::new(Vec2::new(0.0, 0.0), 300.0, 3, 0);
-        ship.cargo = Some((Resource::Grain, 5.0));
+        ship.cargo = Some((Commodity::Grain, 5.0));
         ship.purchase_price = 100.0;
         ship.planned_target_after_load = Some(2);
         let positions = [

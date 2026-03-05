@@ -3,7 +3,7 @@
 use bevy::prelude::Vec2;
 
 use crate::components::{
-    bid_multiplier, Resource, BASE_COSTS, INVENTORY_CARRYING_CAPACITY, RESOURCE_COUNT,
+    bid_multiplier, Commodity, BASE_COSTS, COMMODITY_COUNT, INVENTORY_CARRYING_CAPACITY,
 };
 
 use super::{PlanningTuning, ShipState};
@@ -59,7 +59,7 @@ impl ShipState {
 
     pub(super) fn calculate_utility(
         &self,
-        resource: Resource,
+        resource: Commodity,
         target_id: usize,
         buy_price: f32,
         lot_size: f32,
@@ -137,7 +137,7 @@ impl ShipState {
         };
         let real_expected_profit = real_expected_revenue - (buy_price * effective_lot_size);
 
-        let average_base_cost = BASE_COSTS.iter().copied().sum::<f32>() / RESOURCE_COUNT as f32;
+        let average_base_cost = BASE_COSTS.iter().copied().sum::<f32>() / COMMODITY_COUNT as f32;
         let relative_price = (buy_price / average_base_cost).max(0.0);
         let price_risk_penalty = (relative_price - 1.0).max(0.0) * HIGH_PRICE_RISK_WEIGHT;
         let price_risk_factor = (1.0 / (1.0 + price_risk_penalty)).clamp(0.35, 1.0);
@@ -168,7 +168,7 @@ impl ShipState {
             0.0
         };
 
-        let industrial_bonus = if resource == Resource::Iron || resource == Resource::Timber {
+        let industrial_bonus = if resource == Commodity::Iron || resource == Commodity::Timber {
             let infra_excess = (self.ledger()[target_id].infrastructure_level
                 - INDUSTRIAL_INFRA_THRESHOLD)
                 .max(0.0);
@@ -288,8 +288,8 @@ mod tests {
     fn calculate_utility_profitable_route_is_positive() {
         let mut ship = make_ship_with_ledger(2);
         ship.set_cash(10_000.0);
-        ship.ledger_mut()[1].prices[Resource::Grain.idx()] = 200.0;
-        ship.ledger_mut()[1].inventories[Resource::Grain.idx()] = 0.0;
+        ship.ledger_mut()[1].prices[Commodity::Grain.idx()] = 200.0;
+        ship.ledger_mut()[1].inventories[Commodity::Grain.idx()] = 0.0;
         ship.ledger_mut()[1].cash = 100_000.0;
         ship.ledger_mut()[1].tick_updated = 100;
 
@@ -298,7 +298,7 @@ mod tests {
         let departures = [0.0_f32, 0.0_f32];
         let ctx = setup_utility_context(&positions, &tuning, &departures, 10_000.0);
 
-        let utility = ship.calculate_utility(Resource::Grain, 1, 10.0, 5.0, &ctx);
+        let utility = ship.calculate_utility(Commodity::Grain, 1, 10.0, 5.0, &ctx);
 
         assert!(utility > 0.0, "expected positive utility, got {utility}");
     }
@@ -307,8 +307,8 @@ mod tests {
     fn calculate_utility_loss_route_is_negative() {
         let mut ship = make_ship_with_ledger(2);
         ship.set_cash(10_000.0);
-        ship.ledger_mut()[1].prices[Resource::Grain.idx()] = 5.0;
-        ship.ledger_mut()[1].inventories[Resource::Grain.idx()] = 0.0;
+        ship.ledger_mut()[1].prices[Commodity::Grain.idx()] = 5.0;
+        ship.ledger_mut()[1].inventories[Commodity::Grain.idx()] = 0.0;
         ship.ledger_mut()[1].cash = 100_000.0;
         ship.ledger_mut()[1].tick_updated = 100;
 
@@ -317,7 +317,7 @@ mod tests {
         let departures = [0.0_f32, 0.0_f32];
         let ctx = setup_utility_context(&positions, &tuning, &departures, 10_000.0);
 
-        let utility = ship.calculate_utility(Resource::Grain, 1, 500.0, 5.0, &ctx);
+        let utility = ship.calculate_utility(Commodity::Grain, 1, 500.0, 5.0, &ctx);
 
         assert!(utility < 0.0, "expected negative utility, got {utility}");
     }
@@ -325,7 +325,7 @@ mod tests {
     #[test]
     fn calculate_utility_exceeds_max_distance_returns_neg_inf() {
         let mut ship = make_ship_with_ledger(2);
-        ship.ledger_mut()[1].prices[Resource::Grain.idx()] = 200.0;
+        ship.ledger_mut()[1].prices[Commodity::Grain.idx()] = 200.0;
         ship.ledger_mut()[1].cash = 100_000.0;
         ship.ledger_mut()[1].tick_updated = 100;
 
@@ -334,7 +334,7 @@ mod tests {
         let departures = [0.0_f32, 0.0_f32];
         let ctx = setup_utility_context(&positions, &tuning, &departures, 100.0);
 
-        let utility = ship.calculate_utility(Resource::Grain, 1, 10.0, 5.0, &ctx);
+        let utility = ship.calculate_utility(Commodity::Grain, 1, 10.0, 5.0, &ctx);
 
         assert_eq!(utility, f32::NEG_INFINITY);
     }
@@ -342,8 +342,8 @@ mod tests {
     #[test]
     fn calculate_utility_full_destination_inventory_returns_neg_inf() {
         let mut ship = make_ship_with_ledger(2);
-        ship.ledger_mut()[1].prices[Resource::Grain.idx()] = 200.0;
-        ship.ledger_mut()[1].inventories[Resource::Grain.idx()] = INVENTORY_CARRYING_CAPACITY;
+        ship.ledger_mut()[1].prices[Commodity::Grain.idx()] = 200.0;
+        ship.ledger_mut()[1].inventories[Commodity::Grain.idx()] = INVENTORY_CARRYING_CAPACITY;
         ship.ledger_mut()[1].cash = 100_000.0;
         ship.ledger_mut()[1].tick_updated = 100;
 
@@ -352,7 +352,7 @@ mod tests {
         let departures = [0.0_f32, 0.0_f32];
         let ctx = setup_utility_context(&positions, &tuning, &departures, 10_000.0);
 
-        let utility = ship.calculate_utility(Resource::Grain, 1, 10.0, 5.0, &ctx);
+        let utility = ship.calculate_utility(Commodity::Grain, 1, 10.0, 5.0, &ctx);
 
         assert_eq!(utility, f32::NEG_INFINITY);
     }

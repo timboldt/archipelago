@@ -30,7 +30,7 @@ cargo test <test_name>
 ### Key Structs
 
 ```rust
-enum Resource { Grain, Timber, Iron, Tools, Spices }
+enum Commodity { Grain, Timber, Iron, Tools, Spices }
 type Inventory = [f32; 5];
 
 struct PriceEntry {
@@ -99,7 +99,7 @@ struct Ship {
 
 - `PriceLedger` is indexed by island `id` (`Vec<PriceEntry>` of length = number of islands). Always allocate ledgers at world-init time with a fixed island count.
 - `PlanningTuning` is intentionally small and environmental: `global_friction_mult`, `info_decay_rate`, `market_spread`.
-- Resources are fixed-size arrays (`[f32; 5]`) rather than maps for cache efficiency; iterate over them using `Resource::iter()` via `strum`.
+- Commoditys are fixed-size arrays (`[f32; 5]`) rather than maps for cache efficiency; iterate over them using `Commodity::iter()` via `strum`.
 - Ship ledger merges are the **only** mechanism for information propagation — there is no global broadcast.
 - Ships spawn with noisy/stale initial beliefs plus accurate home-port knowledge; do not reintroduce perfect global initialization.
 - Runtime controls currently: `[` / `]` for ship selection, `Shift+[` / `Shift+]` for island selection.
