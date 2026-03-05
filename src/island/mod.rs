@@ -1,14 +1,19 @@
-use ::rand::Rng;
-use macroquad::prelude::Vec2;
-use strum::IntoEnumIterator;
-use strum_macros::EnumIter;
+//! Island economy logic.
+//!
+//! All simulation math lives here as methods on `IslandEconomy`, preserving
+//! testability independent of Bevy.
 
-/// Number of fixed resources in the simulation economy.
-pub const RESOURCE_COUNT: usize = 5;
-/// Base (pre-scarcity) unit value per resource.
-pub const BASE_COSTS: [f32; RESOURCE_COUNT] = [20.0, 30.0, 45.0, 120.0, 180.0];
-/// Nominal per-resource storage baseline used during island initialization.
-pub const INVENTORY_CARRYING_CAPACITY: f32 = 180.0;
+pub mod spawn;
+
+use bevy::prelude::*;
+use ::rand::Rng;
+use strum::IntoEnumIterator;
+
+use crate::components::{
+    bid_multiplier, ask_multiplier, Inventory, PriceEntry, PriceLedger, Resource,
+    BASE_COSTS, INVENTORY_CARRYING_CAPACITY, RESOURCE_COUNT,
+};
+
 const INITIAL_POPULATION_MIN: f32 = 45.0;
 const INITIAL_POPULATION_MAX: f32 = 140.0;
 const INITIAL_CASH_MIN: f32 = 900.0;
@@ -52,90 +57,26 @@ const CAPITAL_INVESTMENT_RATE: f32 = 0.06;
 const INFRASTRUCTURE_INVESTMENT_EFFICIENCY: f32 = 0.00032;
 const MAX_INFRASTRUCTURE_LEVEL: f32 = 3.5;
 
-fn bid_multiplier(market_spread: f32) -> f32 {
-    (1.0 - market_spread.clamp(0.0, 1.8) * 0.5).max(0.05)
-}
-
-fn ask_multiplier(market_spread: f32) -> f32 {
-    1.0 + market_spread.clamp(0.0, 1.8) * 0.5
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, EnumIter)]
-#[repr(usize)]
-/// Resource kinds traded and consumed across islands and ships.
-pub enum Resource {
-    Grain,
-    Timber,
-    Iron,
-    Tools,
-    Spices,
-}
-
-impl Resource {
-    /// Returns the fixed array index for this resource.
-    pub fn idx(self) -> usize {
-        self as usize
-    }
-
-    /// Returns cargo-space volume used by one unit of this resource.
-    pub fn volume_per_unit(self) -> f32 {
-        match self {
-            Resource::Grain => 1.0,
-            Resource::Timber => 0.85,
-            Resource::Iron => 0.75,
-            Resource::Tools => 0.2,
-            Resource::Spices => 0.2,
-        }
-    }
-}
-
-/// Fixed-size inventory vector indexed by [`Resource::idx`].
-pub type Inventory = [f32; RESOURCE_COUNT];
-
-#[derive(Clone, Copy, Debug)]
-/// Snapshot of one island market for ship/island local ledgers.
-pub struct PriceEntry {
-    /// Observed local prices by resource.
-    pub prices: [f32; RESOURCE_COUNT],
-    /// Observed local inventories by resource.
-    pub inventories: [f32; RESOURCE_COUNT],
-    /// Observed island cash/liquidity.
-    pub cash: f32,
-    /// Observed island infrastructure level.
-    pub infrastructure_level: f32,
-    /// World tick when the source island last refreshed this entry.
-    pub tick_updated: u64,
-    /// World tick when this ledger owner last saw the source island directly.
-    pub last_seen_tick: u64,
-}
-
-/// Fixed-size per-island market cache indexed by island id.
-pub type PriceLedger = Vec<PriceEntry>;
-
-/// Core island economy state and market operations.
-pub struct Island {
-    #[allow(dead_code)]
+/// Core island economy state and market operations — used as a Bevy Component.
+#[derive(Component)]
+pub struct IslandEconomy {
     pub id: usize,
-    pub pos: Vec2,
     pub inventory: Inventory,
     pub production_rates: Inventory,
     pub consumption_rates: Inventory,
     pub population: f32,
     pub cash: f32,
     pub infrastructure_level: f32,
-    infra_credit: f32,
-    resource_capacity: Inventory,
-    population_capacity: f32,
-    infrastructure_capacity: f32,
+    pub infra_credit: f32,
+    pub resource_capacity: Inventory,
+    pub population_capacity: f32,
+    pub infrastructure_capacity: f32,
     pub local_prices: [f32; RESOURCE_COUNT],
-    pub ledger: PriceLedger,
 }
 
-impl Island {
-    /// Creates a new island with randomized capacities, production, and initial market state.
-    ///
-    /// `num_islands` defines the fixed ledger length so entries can be indexed by island id.
-    pub fn new(id: usize, pos: Vec2, num_islands: usize, rng: &mut impl Rng) -> Self {
+impl IslandEconomy {
+    /// Creates a new island economy with randomized capacities, production, and initial state.
+    pub fn new(id: usize, num_islands: usize, rng: &mut impl Rng) -> (Self, PriceLedger) {
         let mut inventory = [0.0_f32; RESOURCE_COUNT];
         let mut production_rates = [0.0_f32; RESOURCE_COUNT];
         let mut consumption_rates = [0.0_f32; RESOURCE_COUNT];
@@ -219,9 +160,8 @@ impl Island {
             }
         }
 
-        let mut island = Self {
+        let mut economy = Self {
             id,
-            pos,
             inventory,
             production_rates,
             consumption_rates,
@@ -234,23 +174,25 @@ impl Island {
             population_capacity,
             infrastructure_capacity,
             local_prices: [0.0; RESOURCE_COUNT],
-            ledger: vec![
-                PriceEntry {
-                    prices: [0.0; RESOURCE_COUNT],
-                    inventories: [0.0; RESOURCE_COUNT],
-                    cash: 0.0,
-                    infrastructure_level: 0.0,
-                    tick_updated: 0,
-                    last_seen_tick: 0,
-                };
-                num_islands
-            ],
         };
-        island.recompute_local_prices(0);
-        island
+
+        let mut ledger = vec![
+            PriceEntry {
+                prices: [0.0; RESOURCE_COUNT],
+                inventories: [0.0; RESOURCE_COUNT],
+                cash: 0.0,
+                infrastructure_level: 0.0,
+                tick_updated: 0,
+                last_seen_tick: 0,
+            };
+            num_islands
+        ];
+
+        economy.recompute_local_prices_with_ledger(0, &mut ledger);
+        (economy, ledger)
     }
 
-    pub fn produce_consume_and_price(&mut self, dt: f32, tick: u64) {
+    pub fn produce_consume_and_price(&mut self, dt: f32, tick: u64, ledger: &mut PriceLedger) {
         let grain_idx = Resource::Grain.idx();
         let grain_stability_target = self.population * GRAIN_PER_CAPITA_STABILITY;
         let grain_balance =
@@ -352,7 +294,7 @@ impl Island {
                 .min(self.infrastructure_capacity);
         }
 
-        self.recompute_local_prices(tick);
+        self.recompute_local_prices_with_ledger(tick, ledger);
     }
 
     fn reset_survival_focus(&mut self) {
@@ -374,7 +316,7 @@ impl Island {
     }
 
     /// Recomputes local scarcity-adjusted prices and updates this island's self ledger entry.
-    pub fn recompute_local_prices(&mut self, tick: u64) {
+    pub fn recompute_local_prices_with_ledger(&mut self, tick: u64, ledger: &mut PriceLedger) {
         for resource in Resource::iter() {
             let index = resource.idx();
             let inventory = self.inventory[index].max(0.0);
@@ -382,7 +324,7 @@ impl Island {
             self.local_prices[index] =
                 BASE_COSTS[index] * (1.0 + SCARCITY_LOG_SCALE * scarcity_pressure);
         }
-        if let Some(entry) = self.ledger.get_mut(self.id) {
+        if let Some(entry) = ledger.get_mut(self.id) {
             entry.prices = self.local_prices;
             entry.inventories = self.inventory;
             entry.cash = self.cash;
@@ -392,14 +334,13 @@ impl Island {
     }
 
     /// Marks that this island was directly observed at `tick`.
-    pub fn mark_seen(&mut self, tick: u64) {
-        if let Some(entry) = self.ledger.get_mut(self.id) {
+    pub fn mark_seen(&self, tick: u64, ledger: &mut PriceLedger) {
+        if let Some(entry) = ledger.get_mut(self.id) {
             entry.last_seen_tick = tick;
         }
     }
 
-    /// Buys `resource` from a ship at bid price, limited by island cash.
-    ///
+    /// Buys `resource` from a ship at bid price.
     /// Returns `(filled_amount, total_value_paid)`.
     pub fn sell_to_island(
         &mut self,
@@ -416,8 +357,6 @@ impl Island {
             return (0.0, 0.0);
         }
 
-        // Island always accepts goods at bid price; cash may go negative.
-        // The ship settles any resulting deficit at the end of the dock sequence.
         let total_value = amount * price;
         self.inventory[index] += amount;
         self.cash -= total_value;
@@ -425,7 +364,6 @@ impl Island {
     }
 
     /// Sells `resource` to a ship at ask price, limited by island inventory.
-    ///
     /// Returns `(filled_amount, total_cost_charged)`.
     pub fn buy_from_island(
         &mut self,
@@ -469,6 +407,24 @@ impl Island {
     pub fn ask_price(&self, resource: Resource, market_spread: f32) -> f32 {
         self.local_prices[resource.idx()] * ask_multiplier(market_spread)
     }
+
+    /// Create a non-Component copy of economy data for ship seeding.
+    pub fn clone_for_seeding(source: &IslandEconomy) -> IslandEconomy {
+        IslandEconomy {
+            id: source.id,
+            inventory: source.inventory,
+            production_rates: source.production_rates,
+            consumption_rates: source.consumption_rates,
+            population: source.population,
+            cash: source.cash,
+            infrastructure_level: source.infrastructure_level,
+            infra_credit: source.infra_credit,
+            resource_capacity: source.resource_capacity,
+            population_capacity: source.population_capacity,
+            infrastructure_capacity: source.infrastructure_capacity,
+            local_prices: source.local_prices,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -483,78 +439,76 @@ mod tests {
     #[test]
     fn recompute_prices_updates_self_ledger_entry() {
         let mut rng = StdRng::seed_from_u64(7);
-        let mut island = Island::new(0, Vec2::new(0.0, 0.0), 3, &mut rng);
-        island.inventory = [0.0, 20.0, 30.0, 40.0, 50.0];
-        island.cash = 1234.0;
-        island.infrastructure_level = 1.75;
+        let (mut economy, mut ledger) = IslandEconomy::new(0, 3, &mut rng);
+        economy.inventory = [0.0, 20.0, 30.0, 40.0, 50.0];
+        economy.cash = 1234.0;
+        economy.infrastructure_level = 1.75;
 
-        island.recompute_local_prices(42);
+        economy.recompute_local_prices_with_ledger(42, &mut ledger);
 
-        let entry = island.ledger[0];
-        assert_eq!(entry.prices, island.local_prices);
-        assert_eq!(entry.inventories, island.inventory);
-        approx_eq(entry.cash, island.cash);
-        approx_eq(entry.infrastructure_level, island.infrastructure_level);
+        let entry = ledger[0];
+        assert_eq!(entry.prices, economy.local_prices);
+        assert_eq!(entry.inventories, economy.inventory);
+        approx_eq(entry.cash, economy.cash);
+        approx_eq(entry.infrastructure_level, economy.infrastructure_level);
         assert_eq!(entry.tick_updated, 42);
-        assert!(island.local_prices[Resource::Grain.idx()] > BASE_COSTS[Resource::Grain.idx()]);
+        assert!(economy.local_prices[Resource::Grain.idx()] > BASE_COSTS[Resource::Grain.idx()]);
     }
 
     #[test]
     fn sell_to_island_accepts_goods_beyond_cash() {
         let mut rng = StdRng::seed_from_u64(11);
-        let mut island = Island::new(0, Vec2::new(0.0, 0.0), 1, &mut rng);
-        island.cash = 10.0;
-        island.local_prices[Resource::Tools.idx()] = 120.0;
-        let starting_tools = island.inventory[Resource::Tools.idx()];
+        let (mut economy, _ledger) = IslandEconomy::new(0, 1, &mut rng);
+        economy.cash = 10.0;
+        economy.local_prices[Resource::Tools.idx()] = 120.0;
+        let starting_tools = economy.inventory[Resource::Tools.idx()];
         let expected_price = 120.0 * (1.0 - 0.1 * 0.5);
 
-        // Island always accepts goods even when cash-poor; cash goes negative.
-        // The docking sequence settles any resulting deficit after all transactions.
-        let (filled, paid) = island.sell_to_island(Resource::Tools, 1.0, 0.1);
+        let (filled, paid) = economy.sell_to_island(Resource::Tools, 1.0, 0.1);
 
         approx_eq(filled, 1.0);
         approx_eq(paid, expected_price);
         approx_eq(
-            island.inventory[Resource::Tools.idx()],
+            economy.inventory[Resource::Tools.idx()],
             starting_tools + 1.0,
         );
-        assert!(island.cash < 0.0);
+        assert!(economy.cash < 0.0);
     }
 
     #[test]
     fn buy_from_island_is_inventory_limited() {
         let mut rng = StdRng::seed_from_u64(19);
-        let mut island = Island::new(0, Vec2::new(0.0, 0.0), 1, &mut rng);
-        island.inventory[Resource::Grain.idx()] = 2.0;
-        island.local_prices[Resource::Grain.idx()] = 50.0;
-        let starting_cash = island.cash;
+        let (mut economy, _ledger) = IslandEconomy::new(0, 1, &mut rng);
+        economy.inventory[Resource::Grain.idx()] = 2.0;
+        economy.local_prices[Resource::Grain.idx()] = 50.0;
+        let starting_cash = economy.cash;
 
-        let (filled, cost) = island.buy_from_island(Resource::Grain, 5.0, 0.1);
+        let (filled, cost) = economy.buy_from_island(Resource::Grain, 5.0, 0.1);
 
         approx_eq(filled, 2.0);
         approx_eq(cost, 2.0 * 50.0 * 1.05);
-        approx_eq(island.inventory[Resource::Grain.idx()], 0.0);
-        approx_eq(island.cash, starting_cash + cost);
+        approx_eq(economy.inventory[Resource::Grain.idx()], 0.0);
+        approx_eq(economy.cash, starting_cash + cost);
     }
 
     #[test]
     fn produce_consume_and_price_keeps_state_bounded() {
         let mut rng = StdRng::seed_from_u64(23);
-        let mut island = Island::new(0, Vec2::new(0.0, 0.0), 1, &mut rng);
-        island.population = 64.0;
-        island.inventory = [30.0, 30.0, 30.0, 30.0, 30.0];
-        island.production_rates = [1.0, 1.0, 1.0, 0.0, 0.2];
-        island.consumption_rates = [0.5, 0.1, 0.1, 0.1, 0.05];
+        let (mut economy, mut ledger) = IslandEconomy::new(0, 1, &mut rng);
+        economy.population = 64.0;
+        economy.inventory = [30.0, 30.0, 30.0, 30.0, 30.0];
+        economy.production_rates = [1.0, 1.0, 1.0, 0.0, 0.2];
+        economy.consumption_rates = [0.5, 0.1, 0.1, 0.1, 0.05];
 
-        island.produce_consume_and_price(1.0, 99);
+        economy.produce_consume_and_price(1.0, 99, &mut ledger);
 
-        for amount in island.inventory {
+        for amount in economy.inventory {
             assert!(amount.is_finite());
             assert!(amount >= 0.0);
         }
-        assert!(island.population.is_finite());
-        assert!(island.population >= MIN_POPULATION);
-        assert!(island.population <= island.population_capacity.max(MIN_POPULATION));
-        assert_eq!(island.ledger[0].tick_updated, 99);
+        assert!(economy.population.is_finite());
+        assert!(economy.population >= MIN_POPULATION);
+        assert!(economy.population <= economy.population_capacity.max(MIN_POPULATION));
+        assert_eq!(ledger[0].tick_updated, 99);
     }
 }
