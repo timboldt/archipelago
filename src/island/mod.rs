@@ -28,9 +28,6 @@ const MIN_POPULATION: f32 = 8.0;
 const POPULATION_GROWTH_RATE: f32 = 0.07;
 const POPULATION_STARVATION_RATE: f32 = 0.08;
 const GRAIN_PER_CAPITA_STABILITY: f32 = 0.07;
-const POPULATION_FLOOR_EPSILON: f32 = 0.05;
-const GRAIN_SURVIVAL_PRODUCTION_FLOOR: f32 = 1.8;
-const SURVIVAL_NON_GRAIN_TO_GRAIN_RATIO: f32 = 0.55;
 const TOOL_FABRICATION_BASE_RATE: f32 = 0.45;
 const GRAIN_EXTRACTION_BONUS: f32 = 1.35;
 const TIMBER_EXTRACTION_BONUS: f32 = 1.25;
@@ -50,6 +47,21 @@ const FOCUS_PRODUCTION_BOOST: f32 = 1.9;
 const NON_FOCUS_PRODUCTION_SCALE: f32 = 0.78;
 const TOOLS_PRODUCTIVITY_CAP: f32 = 2.0;
 const TOOLS_PRODUCTIVITY_SCALE: f32 = 0.22;
+
+// Governor constants
+const GOVERNOR_SMOOTHING: f32 = 0.15;
+const URGENCY_SCALE: f32 = 10.0;
+const URGENCY_OFFSET: f32 = 1.0;
+const GRAIN_PRIORITY_WEIGHT: f32 = 3.0;
+const TIMBER_PRIORITY_WEIGHT: f32 = 1.0;
+const IRON_PRIORITY_WEIGHT: f32 = 1.0;
+const SPICES_PRIORITY_WEIGHT: f32 = 0.4;
+const GRAIN_LABOR_FLOOR: f32 = 0.15;
+const TOOL_CHAIN_SCALE: f32 = 4.0;
+const IRON_FOR_TOOLS_WEIGHT: f32 = 0.6;
+const TIMBER_FOR_TOOLS_WEIGHT: f32 = 0.4;
+const SPICE_PRODUCTIVITY_SCALE: f32 = 0.12;
+const SPICE_PRODUCTIVITY_CAP: f32 = 1.20;
 const PER_CAPITA_INFRA_CREDIT_GENERATION: f32 = 0.05;
 const INDUSTRIAL_INFRA_CREDIT_GENERATION: f32 = 0.30;
 const CAPITAL_INVESTMENT_THRESHOLD: f32 = 1600.0;
@@ -72,6 +84,8 @@ pub struct IslandEconomy {
     pub population_capacity: f32,
     pub infrastructure_capacity: f32,
     pub local_prices: [f32; COMMODITY_COUNT],
+    pub labor_allocation: [f32; COMMODITY_COUNT],
+    pub spice_morale_bonus: f32,
 }
 
 impl IslandEconomy {
@@ -174,6 +188,8 @@ impl IslandEconomy {
             population_capacity,
             infrastructure_capacity,
             local_prices: [0.0; COMMODITY_COUNT],
+            labor_allocation: Self::initial_labor_allocation(&production_rates),
+            spice_morale_bonus: 1.0,
         };
 
         let mut ledger = vec![
@@ -192,6 +208,160 @@ impl IslandEconomy {
         (economy, ledger)
     }
 
+    /// Computes an initial (non-smoothed) labor allocation from production rates.
+    fn initial_labor_allocation(
+        production_rates: &[f32; COMMODITY_COUNT],
+    ) -> [f32; COMMODITY_COUNT] {
+        let mut alloc = [0.0_f32; COMMODITY_COUNT];
+        let mut total = 0.0;
+        for c in Commodity::iter() {
+            if c == Commodity::Tools {
+                continue;
+            }
+            let idx = c.idx();
+            if production_rates[idx] > 0.0 {
+                alloc[idx] = 1.0; // equal weight initially
+                total += 1.0;
+            }
+        }
+        if total > 0.0 {
+            for v in &mut alloc {
+                *v /= total;
+            }
+        }
+        alloc
+    }
+
+    fn priority_weight(c: Commodity) -> f32 {
+        match c {
+            Commodity::Grain => GRAIN_PRIORITY_WEIGHT,
+            Commodity::Timber => TIMBER_PRIORITY_WEIGHT,
+            Commodity::Iron => IRON_PRIORITY_WEIGHT,
+            Commodity::Spices => SPICES_PRIORITY_WEIGHT,
+            Commodity::Tools => 0.0,
+        }
+    }
+
+    fn update_labor_allocation(&mut self) {
+        let pop = self.population.max(1.0);
+        let tools_idx = Commodity::Tools.idx();
+
+        // Compute average non-zero production rate (excluding Tools).
+        let mut rate_sum = 0.0_f32;
+        let mut rate_count = 0_u32;
+        for c in Commodity::iter() {
+            if c == Commodity::Tools {
+                continue;
+            }
+            let r = self.production_rates[c.idx()];
+            if r > 0.0 {
+                rate_sum += r;
+                rate_count += 1;
+            }
+        }
+        let avg_rate = if rate_count > 0 {
+            rate_sum / rate_count as f32
+        } else {
+            1.0
+        };
+
+        // Tool scarcity pressure for tool-chain bonus.
+        let tools_per_1k = if pop > 0.0 {
+            self.inventory[tools_idx] * 1000.0 / pop
+        } else {
+            TARGET_TOOLS_PER_1K_POP
+        };
+        let tool_scarcity =
+            ((TARGET_TOOLS_PER_1K_POP - tools_per_1k) / TARGET_TOOLS_PER_1K_POP).clamp(0.0, 1.0);
+
+        let mut urgency = [0.0_f32; COMMODITY_COUNT];
+        let mut urgency_total = 0.0_f32;
+
+        for c in Commodity::iter() {
+            if c == Commodity::Tools {
+                continue;
+            }
+            let idx = c.idx();
+            if self.production_rates[idx] <= 0.0 {
+                continue;
+            }
+
+            let consumption = self.consumption_rates[idx] * pop;
+            let days_of_supply = if consumption > 0.0 {
+                self.inventory[idx] / consumption
+            } else {
+                100.0 // no consumption = no urgency
+            };
+            let raw = URGENCY_SCALE / (days_of_supply + URGENCY_OFFSET);
+            let comparative_advantage = (self.production_rates[idx] / avg_rate).clamp(0.5, 2.0);
+            urgency[idx] = raw * Self::priority_weight(c) * comparative_advantage;
+        }
+
+        // Tool-chain bonus: when tools are scarce, boost Iron and Timber urgency.
+        let iron_idx = Commodity::Iron.idx();
+        let timber_idx = Commodity::Timber.idx();
+        let tool_chain_extra = tool_scarcity * TOOL_CHAIN_SCALE;
+        if self.production_rates[iron_idx] > 0.0 {
+            urgency[iron_idx] += tool_chain_extra * IRON_FOR_TOOLS_WEIGHT;
+        }
+        if self.production_rates[timber_idx] > 0.0 {
+            urgency[timber_idx] += tool_chain_extra * TIMBER_FOR_TOOLS_WEIGHT;
+        }
+
+        for v in &urgency {
+            urgency_total += v;
+        }
+
+        // Normalize to target allocation.
+        let mut target = [0.0_f32; COMMODITY_COUNT];
+        if urgency_total > 0.0 {
+            for (t, u) in target.iter_mut().zip(urgency.iter()) {
+                *t = u / urgency_total;
+            }
+        }
+
+        // Enforce grain labor floor.
+        let grain_idx = Commodity::Grain.idx();
+        if self.production_rates[grain_idx] > 0.0 && target[grain_idx] < GRAIN_LABOR_FLOOR {
+            let deficit = GRAIN_LABOR_FLOOR - target[grain_idx];
+            target[grain_idx] = GRAIN_LABOR_FLOOR;
+            // Proportionally reduce others.
+            let others_total: f32 = target
+                .iter()
+                .enumerate()
+                .filter(|&(i, _)| i != grain_idx)
+                .map(|(_, v)| *v)
+                .sum();
+            if others_total > 0.0 {
+                for (i, t) in target.iter_mut().enumerate() {
+                    if i != grain_idx {
+                        *t -= *t * deficit / others_total;
+                        *t = t.max(0.0);
+                    }
+                }
+            }
+        }
+
+        // EMA smoothing.
+        for (alloc, t) in self.labor_allocation.iter_mut().zip(target.iter()) {
+            *alloc = GOVERNOR_SMOOTHING * t + (1.0 - GOVERNOR_SMOOTHING) * *alloc;
+        }
+
+        // Re-normalize to ensure sum == 1.0.
+        let alloc_sum: f32 = self.labor_allocation.iter().sum();
+        if alloc_sum > 0.0 {
+            for v in &mut self.labor_allocation {
+                *v /= alloc_sum;
+            }
+        }
+    }
+
+    fn update_spice_morale(&mut self) {
+        let spice_per_capita = self.inventory[Commodity::Spices.idx()] / self.population.max(1.0);
+        self.spice_morale_bonus = (1.0 + SPICE_PRODUCTIVITY_SCALE * spice_per_capita.sqrt())
+            .clamp(1.0, SPICE_PRODUCTIVITY_CAP);
+    }
+
     pub fn produce_consume_and_price(&mut self, dt: f32, tick: u64, ledger: &mut PriceLedger) {
         let grain_idx = Commodity::Grain.idx();
         let grain_stability_target = self.population * GRAIN_PER_CAPITA_STABILITY;
@@ -202,14 +372,12 @@ impl IslandEconomy {
         let starvation_component = (-smooth_balance).max(0.0) * POPULATION_STARVATION_RATE;
         self.population += self.population * (growth_component - starvation_component) * dt;
 
-        if self.population <= MIN_POPULATION + POPULATION_FLOOR_EPSILON
-            && self.inventory[grain_idx] < grain_stability_target
-        {
-            self.reset_survival_focus();
-        }
         self.population = self
             .population
             .clamp(MIN_POPULATION, self.population_capacity.max(MIN_POPULATION));
+
+        self.update_labor_allocation();
+        self.update_spice_morale();
 
         for resource in Commodity::iter() {
             let index = resource.idx();
@@ -228,7 +396,7 @@ impl IslandEconomy {
                 } else if resource == Commodity::Timber {
                     extraction *= TIMBER_EXTRACTION_BONUS;
                 }
-                extraction *= tools_boost;
+                extraction *= tools_boost * self.labor_allocation[index] * self.spice_morale_bonus;
                 self.inventory[index] += extraction;
                 self.inventory[index] = self.inventory[index].min(capacity);
             }
@@ -295,24 +463,6 @@ impl IslandEconomy {
         }
 
         self.recompute_local_prices_with_ledger(tick, ledger);
-    }
-
-    fn reset_survival_focus(&mut self) {
-        let grain_idx = Commodity::Grain.idx();
-        let timber_idx = Commodity::Timber.idx();
-        let iron_idx = Commodity::Iron.idx();
-        let spices_idx = Commodity::Spices.idx();
-
-        self.production_rates[grain_idx] =
-            self.production_rates[grain_idx].max(GRAIN_SURVIVAL_PRODUCTION_FLOOR);
-
-        let non_grain_ceiling =
-            self.production_rates[grain_idx] * SURVIVAL_NON_GRAIN_TO_GRAIN_RATIO;
-        self.production_rates[timber_idx] =
-            self.production_rates[timber_idx].min(non_grain_ceiling);
-        self.production_rates[iron_idx] = self.production_rates[iron_idx].min(non_grain_ceiling);
-        self.production_rates[spices_idx] =
-            self.production_rates[spices_idx].min(non_grain_ceiling);
     }
 
     /// Recomputes local scarcity-adjusted prices and updates this island's self ledger entry.
@@ -423,6 +573,8 @@ impl IslandEconomy {
             population_capacity: source.population_capacity,
             infrastructure_capacity: source.infrastructure_capacity,
             local_prices: source.local_prices,
+            labor_allocation: source.labor_allocation,
+            spice_morale_bonus: source.spice_morale_bonus,
         }
     }
 }
@@ -510,5 +662,126 @@ mod tests {
         assert!(economy.population >= MIN_POPULATION);
         assert!(economy.population <= economy.population_capacity.max(MIN_POPULATION));
         assert_eq!(ledger[0].tick_updated, 99);
+    }
+
+    /// Helper to create a deterministic economy with controlled state for governor tests.
+    fn make_test_economy() -> (IslandEconomy, PriceLedger) {
+        let mut rng = StdRng::seed_from_u64(42);
+        let (mut e, ledger) = IslandEconomy::new(0, 1, &mut rng);
+        // Reset to known state for predictable tests.
+        e.population = 50.0;
+        e.inventory = [50.0, 50.0, 50.0, 50.0, 50.0];
+        e.production_rates = [1.5, 1.0, 0.8, 0.0, 0.3];
+        e.consumption_rates = [1.0, 0.2, 0.2, 0.2, 0.1];
+        e.labor_allocation = IslandEconomy::initial_labor_allocation(&e.production_rates);
+        e.spice_morale_bonus = 1.0;
+        (e, ledger)
+    }
+
+    #[test]
+    fn governor_zeros_nonproduceable() {
+        let (mut e, _) = make_test_economy();
+        // Tools production_rate is 0, so labor_allocation for Tools must stay 0.
+        e.update_labor_allocation();
+        approx_eq(e.labor_allocation[Commodity::Tools.idx()], 0.0);
+        // Spices has production > 0, so allocation should be > 0.
+        assert!(e.labor_allocation[Commodity::Spices.idx()] > 0.0);
+    }
+
+    #[test]
+    fn governor_prioritizes_grain_when_starving() {
+        let (mut e, _) = make_test_economy();
+        e.inventory[Commodity::Grain.idx()] = 0.5; // near-zero grain
+                                                   // Run governor many times to converge past EMA.
+        for _ in 0..100 {
+            e.update_labor_allocation();
+        }
+        let grain_alloc = e.labor_allocation[Commodity::Grain.idx()];
+        // Grain should dominate allocation.
+        assert!(
+            grain_alloc > 0.5,
+            "Expected grain > 50%, got {:.1}%",
+            grain_alloc * 100.0
+        );
+    }
+
+    #[test]
+    fn governor_tool_chain_boosts_iron_timber() {
+        // With plenty of tools.
+        let (mut e_tools, _) = make_test_economy();
+        e_tools.inventory = [50.0, 50.0, 50.0, 200.0, 50.0];
+        for _ in 0..100 {
+            e_tools.update_labor_allocation();
+        }
+
+        // With zero tools.
+        let (mut e_no_tools, _) = make_test_economy();
+        e_no_tools.inventory = [50.0, 50.0, 50.0, 0.0, 50.0];
+        for _ in 0..100 {
+            e_no_tools.update_labor_allocation();
+        }
+
+        let iron_with = e_no_tools.labor_allocation[Commodity::Iron.idx()];
+        let iron_without = e_tools.labor_allocation[Commodity::Iron.idx()];
+        let timber_with = e_no_tools.labor_allocation[Commodity::Timber.idx()];
+        let timber_without = e_tools.labor_allocation[Commodity::Timber.idx()];
+
+        // Tool scarcity should boost iron+timber combined allocation.
+        assert!(
+            (iron_with + timber_with) > (iron_without + timber_without),
+            "Tool chain bonus should increase iron+timber: scarce={:.3}+{:.3}, abundant={:.3}+{:.3}",
+            iron_with, timber_with, iron_without, timber_without
+        );
+    }
+
+    #[test]
+    fn governor_smoothing() {
+        let (mut e, _) = make_test_economy();
+        let initial = e.labor_allocation;
+        // Drastically change conditions.
+        e.inventory[Commodity::Grain.idx()] = 0.1;
+        e.update_labor_allocation();
+        // After one tick, allocation should have changed but not fully converged.
+        let grain_idx = Commodity::Grain.idx();
+        assert!(e.labor_allocation[grain_idx] > initial[grain_idx]);
+        // But should not yet be at the converged value (EMA smoothing).
+        assert!(e.labor_allocation[grain_idx] < 0.9);
+    }
+
+    #[test]
+    fn spice_morale_boosts_production() {
+        let (mut e, mut ledger) = make_test_economy();
+        e.inventory[Commodity::Spices.idx()] = 0.0;
+        e.produce_consume_and_price(1.0, 1, &mut ledger);
+        let grain_no_spice = e.inventory[Commodity::Grain.idx()];
+
+        // Reset and try with high spices.
+        let (mut e2, mut ledger2) = make_test_economy();
+        e2.inventory = e.inventory;
+        e2.inventory[Commodity::Grain.idx()] = 50.0;
+        e2.inventory[Commodity::Spices.idx()] = 200.0;
+        e2.production_rates = e.production_rates;
+        e2.consumption_rates = e.consumption_rates;
+        e2.labor_allocation = e.labor_allocation;
+        e2.population = e.population;
+        e2.resource_capacity = e.resource_capacity;
+        e2.produce_consume_and_price(1.0, 1, &mut ledger2);
+        let grain_with_spice = e2.inventory[Commodity::Grain.idx()];
+
+        // With spices, morale bonus should result in more grain produced.
+        assert!(
+            grain_with_spice > grain_no_spice,
+            "Spice morale should boost production: with={grain_with_spice}, without={grain_no_spice}"
+        );
+    }
+
+    #[test]
+    fn labor_allocation_sums_to_one() {
+        let (mut e, _) = make_test_economy();
+        for _ in 0..50 {
+            e.update_labor_allocation();
+        }
+        let sum: f32 = e.labor_allocation.iter().sum();
+        approx_eq(sum, 1.0);
     }
 }

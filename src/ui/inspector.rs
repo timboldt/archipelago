@@ -197,6 +197,17 @@ pub fn update_island_inspector(
         economy.local_prices[Commodity::Tools.idx()].max(0.0),
         economy.local_prices[Commodity::Spices.idx()].max(0.0),
     ));
+    s.push_str(&format!(
+        "  Labor G/T/I/S: {:.0}%/{:.0}%/{:.0}%/{:.0}%\n",
+        economy.labor_allocation[Commodity::Grain.idx()] * 100.0,
+        economy.labor_allocation[Commodity::Timber.idx()] * 100.0,
+        economy.labor_allocation[Commodity::Iron.idx()] * 100.0,
+        economy.labor_allocation[Commodity::Spices.idx()] * 100.0,
+    ));
+    s.push_str(&format!(
+        "  Spice Morale: {:.2}x\n",
+        economy.spice_morale_bonus,
+    ));
     s.push_str("  { / }: Prev / Next island\n");
 
     **text = s;
