@@ -4,9 +4,9 @@
 use bevy::input::mouse::MouseWheel;
 use bevy::prelude::*;
 
-use crate::components::ShipMarker;
+use crate::components::{IslandMarker, SelectedIsland, SelectedShip, ShipMarker};
 use crate::island::spawn::WORLD_SIZE;
-use crate::resources::{SelectionState, TimeScale};
+use crate::resources::TimeScale;
 
 const TIME_SCALE_MIN: f32 = 0.25;
 const TIME_SCALE_MAX: f32 = 6.0;
@@ -25,61 +25,118 @@ impl Plugin for InputPlugin {
         app.add_systems(
             Update,
             (
+                ensure_selection_exists,
                 handle_selection_input,
                 handle_time_scale_input,
                 handle_camera_input,
             )
+                .chain()
                 .before(crate::simulation::SimPhase::TickAdvance),
         );
     }
 }
 
-fn handle_selection_input(
-    keys: Res<ButtonInput<KeyCode>>,
-    mut selection: ResMut<SelectionState>,
-    ships: Query<(), With<ShipMarker>>,
-    islands: Query<(), With<crate::components::IslandMarker>>,
+/// If no ship/island is selected (e.g. the selected entity was despawned),
+/// automatically select the first one.
+fn ensure_selection_exists(
+    mut commands: Commands,
+    selected_ships: Query<(), With<SelectedShip>>,
+    all_ships: Query<Entity, With<ShipMarker>>,
+    selected_islands: Query<(), With<SelectedIsland>>,
+    all_islands: Query<Entity, With<IslandMarker>>,
 ) {
-    let ship_count = ships.iter().count();
-    let island_count = islands.iter().count();
+    if selected_ships.is_empty() {
+        let mut sorted: Vec<_> = all_ships.iter().collect();
+        sorted.sort();
+        if let Some(&entity) = sorted.first() {
+            commands.entity(entity).insert(SelectedShip);
+        }
+    }
+    if selected_islands.is_empty() {
+        let mut sorted: Vec<_> = all_islands.iter().collect();
+        sorted.sort();
+        if let Some(&entity) = sorted.first() {
+            commands.entity(entity).insert(SelectedIsland);
+        }
+    }
+}
+
+fn handle_selection_input(
+    mut commands: Commands,
+    keys: Res<ButtonInput<KeyCode>>,
+    selected_ship: Query<Entity, With<SelectedShip>>,
+    all_ships: Query<Entity, With<ShipMarker>>,
+    selected_island: Query<Entity, With<SelectedIsland>>,
+    all_islands: Query<Entity, With<IslandMarker>>,
+) {
     let shift_down = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
 
     if keys.just_pressed(KeyCode::BracketLeft) {
         if shift_down {
-            // Previous island.
-            if island_count > 0 {
-                if selection.selected_island_index == 0 {
-                    selection.selected_island_index = island_count - 1;
-                } else {
-                    selection.selected_island_index -= 1;
-                }
-            }
+            cycle_selection::<IslandMarker, SelectedIsland>(
+                &mut commands,
+                &selected_island,
+                &all_islands,
+                -1,
+            );
         } else {
-            // Previous ship.
-            if ship_count > 0 {
-                if selection.selected_ship_index == 0 {
-                    selection.selected_ship_index = ship_count - 1;
-                } else {
-                    selection.selected_ship_index -= 1;
-                }
-            }
+            cycle_selection::<ShipMarker, SelectedShip>(
+                &mut commands,
+                &selected_ship,
+                &all_ships,
+                -1,
+            );
         }
     }
 
     if keys.just_pressed(KeyCode::BracketRight) {
         if shift_down {
-            // Next island.
-            if island_count > 0 {
-                selection.selected_island_index =
-                    (selection.selected_island_index + 1) % island_count;
-            }
+            cycle_selection::<IslandMarker, SelectedIsland>(
+                &mut commands,
+                &selected_island,
+                &all_islands,
+                1,
+            );
         } else {
-            // Next ship.
-            if ship_count > 0 {
-                selection.selected_ship_index = (selection.selected_ship_index + 1) % ship_count;
-            }
+            cycle_selection::<ShipMarker, SelectedShip>(
+                &mut commands,
+                &selected_ship,
+                &all_ships,
+                1,
+            );
         }
     }
+}
+
+fn cycle_selection<M: Component, S: Component + Default>(
+    commands: &mut Commands,
+    selected: &Query<Entity, With<S>>,
+    all: &Query<Entity, With<M>>,
+    direction: i32,
+) {
+    let mut sorted: Vec<Entity> = all.iter().collect();
+    sorted.sort();
+    if sorted.is_empty() {
+        return;
+    }
+
+    let current = selected.single().ok();
+    let current_idx = current
+        .and_then(|e| sorted.iter().position(|&s| s == e))
+        .unwrap_or(0);
+
+    let new_idx = if direction > 0 {
+        (current_idx + 1) % sorted.len()
+    } else if current_idx == 0 {
+        sorted.len() - 1
+    } else {
+        current_idx - 1
+    };
+
+    if let Some(old) = current {
+        commands.entity(old).remove::<S>();
+    }
+    commands.entity(sorted[new_idx]).insert(S::default());
 }
 
 fn handle_time_scale_input(keys: Res<ButtonInput<KeyCode>>, mut time_scale: ResMut<TimeScale>) {

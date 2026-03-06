@@ -89,6 +89,14 @@ pub struct Position(pub Vec2);
 #[derive(Component)]
 pub struct ShipMarker;
 
+/// Marker: this ship is currently selected in the UI.
+#[derive(Component, Default)]
+pub struct SelectedShip;
+
+/// Marker: this island is currently selected in the UI.
+#[derive(Component, Default)]
+pub struct SelectedIsland;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// Broad operational profile for a ship.
 pub enum ShipArchetype {

@@ -41,7 +41,6 @@ fn main() {
             info_decay_rate: 0.003,
             market_spread: 0.10,
         }))
-        .insert_resource(SelectionState::default())
         .insert_resource(FrameTimingsRes::default())
         .add_plugins(simulation::SimulationPlugin)
         .add_plugins(rendering::RenderingPlugin)

@@ -3,11 +3,10 @@
 use bevy::prelude::*;
 
 use crate::components::{
-    Commodity, IslandId, IslandMarker, ShipArchetype, ShipMarker, ShipMovement, ShipProfile,
-    ShipTrading,
+    Commodity, IslandMarker, SelectedIsland, SelectedShip, ShipArchetype, ShipMarker, ShipMovement,
+    ShipProfile, ShipTrading,
 };
 use crate::island::IslandEconomy;
-use crate::resources::SelectionState;
 
 #[derive(Component)]
 pub struct ShipInspectorText;
@@ -18,8 +17,7 @@ pub struct IslandInspectorText;
 pub fn update_ship_inspector(
     mut commands: Commands,
     mut inspector_q: Query<(Entity, &mut Text), With<ShipInspectorText>>,
-    ships: Query<(Entity, &ShipMovement, &ShipTrading, &ShipProfile), With<ShipMarker>>,
-    selection: Res<SelectionState>,
+    selected_ship: Query<(&ShipMovement, &ShipTrading, &ShipProfile), With<SelectedShip>>,
     ship_count: Query<(), With<ShipMarker>>,
 ) {
     // Ensure inspector exists.
@@ -34,8 +32,8 @@ pub fn update_ship_inspector(
             TextColor(Color::WHITE),
             Node {
                 position_type: PositionType::Absolute,
-                right: Val::Px(14.0),
-                top: Val::Px(14.0),
+                left: Val::Px(14.0),
+                top: Val::Px(390.0),
                 ..default()
             },
             BackgroundColor(Color::srgba(0.03, 0.06, 0.12, 0.82)),
@@ -48,14 +46,8 @@ pub fn update_ship_inspector(
     };
 
     let total_ships = ship_count.iter().count();
-    let selected_idx = selection.selected_ship_index;
 
-    // Find the ship at the selected index.
-    let mut ships_vec: Vec<_> = ships.iter().collect();
-    // Sort by entity for stable ordering.
-    ships_vec.sort_by_key(|(e, _, _, _)| *e);
-
-    let Some(&(_, movement, trading, profile)) = ships_vec.get(selected_idx) else {
+    let Ok((movement, trading, profile)) = selected_ship.single() else {
         **text = "No ships".to_string();
         return;
     };
@@ -99,7 +91,7 @@ pub fn update_ship_inspector(
 
     let mut s = String::new();
     s.push_str("Selected Ship\n");
-    s.push_str(&format!("  Ship: {}/{}\n", selected_idx + 1, total_ships));
+    s.push_str(&format!("  Ships: {}\n", total_ships));
     s.push_str(&format!("  Archetype: {}\n", archetype_label));
     s.push_str(&format!("  {}\n", status));
     s.push_str(&format!("  Speed: {:.1}\n", movement.speed));
@@ -121,8 +113,8 @@ pub fn update_ship_inspector(
 pub fn update_island_inspector(
     mut commands: Commands,
     mut inspector_q: Query<(Entity, &mut Text), With<IslandInspectorText>>,
-    islands: Query<(&IslandId, &IslandEconomy), With<IslandMarker>>,
-    selection: Res<SelectionState>,
+    selected_island: Query<&IslandEconomy, With<SelectedIsland>>,
+    island_count: Query<(), With<IslandMarker>>,
 ) {
     if inspector_q.is_empty() {
         commands.spawn((
@@ -135,8 +127,8 @@ pub fn update_island_inspector(
             TextColor(Color::WHITE),
             Node {
                 position_type: PositionType::Absolute,
-                right: Val::Px(14.0),
-                top: Val::Px(260.0),
+                left: Val::Px(14.0),
+                top: Val::Px(590.0),
                 ..default()
             },
             BackgroundColor(Color::srgba(0.03, 0.06, 0.12, 0.82)),
@@ -148,30 +140,16 @@ pub fn update_island_inspector(
         return;
     };
 
-    let total_islands = islands.iter().count();
-    if total_islands == 0 {
-        **text = "No islands".to_string();
-        return;
-    }
+    let total_islands = island_count.iter().count();
 
-    let selected_idx = selection.selected_island_index.min(total_islands - 1);
-
-    // Find the island at the selected index.
-    let mut islands_vec: Vec<_> = islands.iter().collect();
-    islands_vec.sort_by_key(|(id, _)| id.0);
-
-    let Some(&(_, economy)) = islands_vec.get(selected_idx) else {
+    let Ok(economy) = selected_island.single() else {
         **text = "No islands".to_string();
         return;
     };
 
     let mut s = String::new();
     s.push_str("Selected Island\n");
-    s.push_str(&format!(
-        "  Island: {}/{}\n",
-        selected_idx + 1,
-        total_islands
-    ));
+    s.push_str(&format!("  Islands: {}\n", total_islands));
     s.push_str(&format!(
         "  Population: {:.0}\n",
         economy.population.max(0.0)

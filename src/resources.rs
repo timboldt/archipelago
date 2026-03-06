@@ -34,13 +34,6 @@ pub struct IslandEntityMap(pub Vec<Entity>);
 #[derive(Resource)]
 pub struct IslandPositions(pub Vec<Vec2>);
 
-/// UI selection state.
-#[derive(Resource, Default)]
-pub struct SelectionState {
-    pub selected_ship_index: usize,
-    pub selected_island_index: usize,
-}
-
 /// Performance HUD data.
 #[derive(Resource, Clone, Copy, Default)]
 pub struct FrameTimingsRes {
