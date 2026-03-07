@@ -52,15 +52,23 @@ pub fn update_selection_highlights(
         ),
     >,
 ) {
-    if let (Ok(mut hl), Ok(pos)) = (ship_highlight.single_mut(), selected_ship.single()) {
-        hl.translation.x = pos.0.x;
-        hl.translation.y = pos.0.y;
-        hl.translation.z = 0.5;
+    if let Ok(mut hl) = ship_highlight.single_mut() {
+        if let Ok(pos) = selected_ship.single() {
+            hl.translation.x = pos.0.x;
+            hl.translation.y = pos.0.y;
+            hl.translation.z = 0.5;
+        } else {
+            hl.translation.x = -9999.0;
+        }
     }
 
-    if let (Ok(mut hl), Ok(pos)) = (island_highlight.single_mut(), selected_island.single()) {
-        hl.translation.x = pos.0.x;
-        hl.translation.y = pos.0.y;
-        hl.translation.z = -0.5;
+    if let Ok(mut hl) = island_highlight.single_mut() {
+        if let Ok(pos) = selected_island.single() {
+            hl.translation.x = pos.0.x;
+            hl.translation.y = pos.0.y;
+            hl.translation.z = -0.5;
+        } else {
+            hl.translation.x = -9999.0;
+        }
     }
 }

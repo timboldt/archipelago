@@ -16,7 +16,7 @@ pub struct IslandInspectorText;
 
 pub fn update_ship_inspector(
     mut commands: Commands,
-    mut inspector_q: Query<(Entity, &mut Text), With<ShipInspectorText>>,
+    mut inspector_q: Query<(Entity, &mut Text, &mut Node), With<ShipInspectorText>>,
     selected_ship: Query<(&ShipMovement, &ShipTrading, &ShipProfile), With<SelectedShip>>,
     ship_count: Query<(), With<ShipMarker>>,
 ) {
@@ -34,6 +34,7 @@ pub fn update_ship_inspector(
                 position_type: PositionType::Absolute,
                 left: Val::Px(14.0),
                 top: Val::Px(390.0),
+                display: Display::None,
                 ..default()
             },
             BackgroundColor(Color::srgba(0.03, 0.06, 0.12, 0.82)),
@@ -41,16 +42,17 @@ pub fn update_ship_inspector(
         return;
     }
 
-    let Ok((_, mut text)) = inspector_q.single_mut() else {
+    let Ok((_, mut text, mut node)) = inspector_q.single_mut() else {
         return;
     };
 
     let total_ships = ship_count.iter().count();
 
     let Ok((movement, trading, profile)) = selected_ship.single() else {
-        **text = "No ships".to_string();
+        node.display = Display::None;
         return;
     };
+    node.display = Display::DEFAULT;
 
     let archetype_label = match profile.archetype {
         ShipArchetype::Clipper => "Clipper",
@@ -112,7 +114,7 @@ pub fn update_ship_inspector(
 
 pub fn update_island_inspector(
     mut commands: Commands,
-    mut inspector_q: Query<(Entity, &mut Text), With<IslandInspectorText>>,
+    mut inspector_q: Query<(Entity, &mut Text, &mut Node), With<IslandInspectorText>>,
     selected_island: Query<&IslandEconomy, With<SelectedIsland>>,
     island_count: Query<(), With<IslandMarker>>,
 ) {
@@ -128,7 +130,8 @@ pub fn update_island_inspector(
             Node {
                 position_type: PositionType::Absolute,
                 left: Val::Px(14.0),
-                top: Val::Px(590.0),
+                top: Val::Px(390.0),
+                display: Display::None,
                 ..default()
             },
             BackgroundColor(Color::srgba(0.03, 0.06, 0.12, 0.82)),
@@ -136,16 +139,17 @@ pub fn update_island_inspector(
         return;
     }
 
-    let Ok((_, mut text)) = inspector_q.single_mut() else {
+    let Ok((_, mut text, mut node)) = inspector_q.single_mut() else {
         return;
     };
 
     let total_islands = island_count.iter().count();
 
     let Ok(economy) = selected_island.single() else {
-        **text = "No islands".to_string();
+        node.display = Display::None;
         return;
     };
+    node.display = Display::DEFAULT;
 
     let mut s = String::new();
     s.push_str("Selected Island\n");

@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use rand::Rng;
 
-use crate::components::{IslandId, IslandMarker, MarketLedger, Position, PriceLedger};
+use crate::components::{Commodity, IslandId, IslandMarker, MarketLedger, Position, PriceLedger};
 use crate::island::IslandEconomy;
 use crate::resources::{IslandEntityMap, IslandPositions, RouteHistory};
 
@@ -134,11 +134,38 @@ pub fn generate_arc_positions(rng: &mut impl Rng) -> Vec<Vec2> {
 ///
 /// Returns seed data `(position, economy_clone, ledger_clone)` per island,
 /// needed by ship spawning to seed initial market views.
+/// Pick an island color based on its dominant production.
+///
+/// Grain-heavy → warm sandy tan, Timber → dark forest green,
+/// Iron → rocky grey-brown, Spices → warm terracotta,
+/// Tools → muted olive. All with slight random variation.
+fn island_color(economy: &IslandEconomy, rng: &mut impl Rng) -> Color {
+    let rates = &economy.production_rates;
+    let dominant = [
+        Commodity::Grain,
+        Commodity::Timber,
+        Commodity::Iron,
+        Commodity::Spices,
+    ]
+    .into_iter()
+    .max_by(|a, b| rates[a.idx()].partial_cmp(&rates[b.idx()]).unwrap())
+    .unwrap();
+
+    let v = rng.gen_range(-0.04_f32..0.04); // slight per-island variation
+    match dominant {
+        Commodity::Grain => Color::srgb(0.76 + v, 0.68 + v, 0.42 + v), // sandy tan
+        Commodity::Timber => Color::srgb(0.18 + v, 0.42 + v, 0.15 + v), // dark forest green
+        Commodity::Iron => Color::srgb(0.45 + v, 0.42 + v, 0.38 + v),  // rocky grey-brown
+        Commodity::Spices => Color::srgb(0.65 + v, 0.38 + v, 0.22 + v), // terracotta
+        Commodity::Tools => Color::srgb(0.40 + v, 0.45 + v, 0.30 + v), // muted olive
+    }
+}
+
 pub fn spawn_islands(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<ColorMaterial>,
     rng: &mut impl Rng,
-    island_material: Handle<ColorMaterial>,
 ) -> Vec<(Vec2, IslandEconomy, PriceLedger)> {
     let island_positions = generate_arc_positions(rng);
 
@@ -153,6 +180,7 @@ pub fn spawn_islands(
         // typical mid-range island (~100 pop capacity).
         let scale = (economy.population_capacity / 100.0).sqrt().clamp(0.5, 2.5);
         let mesh = meshes.add(make_island_mesh(rng, scale));
+        let material = materials.add(island_color(&economy, rng));
 
         island_seed_data.push((
             *pos,
@@ -168,7 +196,7 @@ pub fn spawn_islands(
                 MarketLedger(ledger),
                 Position(*pos),
                 Mesh2d(mesh),
-                MeshMaterial2d(island_material.clone()),
+                MeshMaterial2d(material),
                 Transform::from_translation(pos.extend(0.0)),
             ))
             .id();
