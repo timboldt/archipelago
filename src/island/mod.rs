@@ -758,23 +758,17 @@ mod tests {
 
     #[test]
     fn spice_morale_boosts_production() {
-        let (mut e, mut ledger) = make_test_economy();
-        e.inventory[Commodity::Spices.idx()] = 0.0;
-        e.produce_consume_and_price(1.0, 1, &mut ledger);
-        let grain_no_spice = e.inventory[Commodity::Grain.idx()];
+        let (base, mut ledger) = make_test_economy();
+        let mut no_spice = IslandEconomy::clone_for_seeding(&base);
+        no_spice.inventory[Commodity::Spices.idx()] = 0.0;
+        no_spice.produce_consume_and_price(1.0, 1, &mut ledger);
+        let grain_no_spice = no_spice.inventory[Commodity::Grain.idx()];
 
-        // Reset and try with high spices.
-        let (mut e2, mut ledger2) = make_test_economy();
-        e2.inventory = e.inventory;
-        e2.inventory[Commodity::Grain.idx()] = 50.0;
-        e2.inventory[Commodity::Spices.idx()] = 200.0;
-        e2.production_rates = e.production_rates;
-        e2.consumption_rates = e.consumption_rates;
-        e2.labor_allocation = e.labor_allocation;
-        e2.population = e.population;
-        e2.resource_capacity = e.resource_capacity;
-        e2.produce_consume_and_price(1.0, 1, &mut ledger2);
-        let grain_with_spice = e2.inventory[Commodity::Grain.idx()];
+        let mut with_spice = IslandEconomy::clone_for_seeding(&base);
+        let mut ledger2 = ledger.clone();
+        with_spice.inventory[Commodity::Spices.idx()] = 200.0;
+        with_spice.produce_consume_and_price(1.0, 1, &mut ledger2);
+        let grain_with_spice = with_spice.inventory[Commodity::Grain.idx()];
 
         // With spices, morale bonus should result in more grain produced.
         assert!(
