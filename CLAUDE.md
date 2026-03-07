@@ -13,13 +13,13 @@ cargo clippy --all-targets    # lint
 cargo +nightly fmt            # format
 ```
 
-Bevy `dynamic_linking` is enabled in dev for faster iteration builds.
+Bevy `dynamic_linking` is currently enabled in `Cargo.toml` for faster iteration builds.
 
 ## Project Overview
 
 Archipelago is an economic simulation where islands produce/consume goods and autonomous ship agents trade between them. Information propagates only via ship-island gossip (ledger merges at dock) — there is no global broadcast. Ships plan routes using stale, confidence-decayed market data.
 
-The project is migrating from macroquad to **Bevy 0.16** ECS (current branch: `bevy`). The README still references macroquad in places but the codebase now uses Bevy throughout.
+The codebase now uses **Bevy 0.16** ECS throughout.
 
 ## Architecture
 
@@ -56,6 +56,7 @@ World size, island/ship counts, and starting tick are defined in `src/island/spa
 
 - `[`/`]` — cycle selected ship; `Shift+[`/`Shift+]` — cycle selected island
 - `-`/`=` — decrease/increase sim speed
+- `\` — reset sim speed to 1.0x
 - WASD / arrow keys — pan camera; Q/E or scroll wheel — zoom
 
 ## Documentation Hygiene

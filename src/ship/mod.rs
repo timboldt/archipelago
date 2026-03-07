@@ -670,7 +670,7 @@ impl ShipState {
 
     // ── Ledger sync ────────────────────────────────────────────────────
 
-    pub fn sync_ledger_from_snapshot(&mut self, island_ledger_snapshot: &PriceLedger) {
+    pub fn sync_ledger_from_snapshot(&mut self, island_ledger_snapshot: &[PriceEntry]) {
         let len = self.ledger.len().min(island_ledger_snapshot.len());
         for (i, ship_entry) in self.ledger.iter_mut().enumerate().take(len) {
             if island_ledger_snapshot[i].tick_updated >= ship_entry.tick_updated {

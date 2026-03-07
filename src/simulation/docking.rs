@@ -131,8 +131,6 @@ fn departure_planning_pass(
     all_departure_targets: &mut Vec<(usize, usize)>,
     outbound_for_island: &mut [f32],
 ) {
-    let island_ledger_snapshot = island_ledger.to_vec();
-
     for (local_idx, (_, ship)) in ships.iter_mut().enumerate() {
         if sold_and_empty[local_idx] || bankrupt_local[local_idx] {
             continue;
@@ -143,7 +141,7 @@ fn departure_planning_pass(
         }
 
         let ship_tuning = ship.effective_tuning(planning_tuning);
-        ship.sync_ledger_from_snapshot(&island_ledger_snapshot);
+        ship.sync_ledger_from_snapshot(island_ledger);
         if let Some(target_island_id) = ship.plan_next_island(
             island_id,
             island_positions,

@@ -24,7 +24,7 @@ cargo run
 cargo test
 ```
 
-Bevy `dynamic_linking` is enabled in the dev profile for faster iteration builds.
+Bevy `dynamic_linking` is currently enabled in `Cargo.toml` to speed up iteration builds; if you prefer static linking for release builds, you can disable this feature or gate it behind a custom `[features]` flag.
 
 ## Development Hygiene
 
@@ -55,7 +55,7 @@ Selection is mutually exclusive: selecting a ship deselects the island and vice 
 - **Ships** encode archetype by shape: triangle (Clipper), rectangle (Freighter), circle (Shorthaul). Ship color reflects the currently carried cargo resource.
 - **Selection highlight** — the selected ship or island is marked with a highlight ring/border in world space.
 - **HUD panels** — text-based panels overlay the viewport:
-  - *Left panel:* global resource totals, ship count and archetype mix, population, cash, average infrastructure, effective friction, and frame performance timing.
+  - *Left panel:* global resource totals, ship count and archetype mix, population, cash, average infrastructure, simulation speed, effective friction, and frame performance timing.
   - *Top-right panels:* ship inspector (archetype, status, speed, cargo, cash, etc.) and island inspector (population, cash, infrastructure, inventory, local prices).
 
 ## Simulation Design
