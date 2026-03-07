@@ -162,6 +162,7 @@ pub struct ShipProfile {
     pub efficiency_rating: f32,
     pub max_cargo_volume: f32,
     pub strategy_genes: StrategyGenes,
+    pub home_island_id: Option<usize>,
 }
 
 /// Ship's market knowledge and route memory.

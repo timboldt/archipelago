@@ -11,12 +11,12 @@ use crate::resources::{IslandPositions, PlanningTuningRes, ShipMeshes, Simulatio
 use crate::ship::{ShipState, STARTING_CASH, TARGET_SHIPS_PER_ISLAND};
 
 const SCUTTLE_THRESHOLD_MULTIPLIER: f32 = 0.35;
-const BIRTH_THRESHOLD_MULTIPLIER: f32 = 2.5;
-const BIRTH_FEE_MULTIPLIER: f32 = 1.0;
+const BIRTH_THRESHOLD_MULTIPLIER: f32 = 1.8;
+const BIRTH_FEE_MULTIPLIER: f32 = 0.5;
 const LIFECYCLE_CHECK_INTERVAL_TICKS: u64 = 30;
 const MUTATION_STRENGTH: f32 = 0.05;
 const ISLAND_SPAWN_DROUGHT_TICKS: u64 = 600;
-const ISLAND_SPAWN_SHIP_COST: f32 = 300.0;
+const ISLAND_SPAWN_SHIP_COST: f32 = 150.0;
 
 pub fn evolve_fleet(world: &mut World) {
     let tick = world.resource::<SimulationTick>().0;
@@ -177,7 +177,9 @@ pub fn evolve_fleet(world: &mut World) {
     }
 
     for (_, island_id, pos) in isolated_spawns {
-        let ship = ShipState::new(pos, 350.0, num_islands, island_id);
+        let mut ship = ShipState::new(pos, 350.0, num_islands, island_id);
+        ship.set_cash(ISLAND_SPAWN_SHIP_COST);
+        ship.set_home_island(island_id);
         let (movement, trading, profile, ship_ledger) = ship.into_components();
         let mesh = match profile.archetype {
             ShipArchetype::Clipper => clipper_mesh.clone(),

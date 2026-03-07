@@ -19,6 +19,7 @@ const INDUSTRIAL_INFRA_THRESHOLD: f32 = 1.5;
 const INDUSTRIAL_INPUT_BONUS_PER_INFRA: f32 = 4.0;
 const INDUSTRIAL_INPUT_BONUS_CAP: f32 = 14.0;
 const HIGH_PRICE_RISK_WEIGHT: f32 = 0.65;
+const HOME_ISLAND_UTILITY_BONUS: f32 = 8.0;
 
 pub(super) struct UtilityContext<'a> {
     pub island_positions: &'a [Vec2],
@@ -177,6 +178,12 @@ impl ShipState {
             0.0
         };
 
+        let home_bonus = if self.home_island_id == Some(target_id) {
+            HOME_ISLAND_UTILITY_BONUS
+        } else {
+            0.0
+        };
+
         expected_profit
             - rigging_repair_cost
             - labor_provisions_trip_cost
@@ -184,6 +191,7 @@ impl ShipState {
             - staleness_risk_cost
             + industrial_bonus
             - broke_penalty
+            + home_bonus
     }
 }
 

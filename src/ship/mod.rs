@@ -104,6 +104,7 @@ pub struct ShipState {
     just_sold_resource: Option<Commodity>,
     last_dock_action: DockAction,
     dock_idle_ticks: u32,
+    home_island_id: Option<usize>,
 }
 
 #[allow(dead_code)]
@@ -151,6 +152,7 @@ impl ShipState {
             just_sold_resource: None,
             last_dock_action: DockAction::None,
             dock_idle_ticks: 0,
+            home_island_id: None,
         }
         .with_recomputed_traits()
     }
@@ -208,6 +210,9 @@ impl ShipState {
     }
     pub fn last_docked_island(&self) -> Option<usize> {
         self.docked_at.or(self.last_docked_island_id)
+    }
+    pub fn set_home_island(&mut self, island_id: usize) {
+        self.home_island_id = Some(island_id);
     }
     pub fn target_island(&self) -> Option<usize> {
         self.target_island_id
@@ -1017,6 +1022,7 @@ impl ShipState {
                 efficiency_rating: self.efficiency_rating,
                 max_cargo_volume: self.max_cargo_volume,
                 strategy_genes: self.strategy_genes,
+                home_island_id: self.home_island_id,
             },
             ShipLedger {
                 ledger: self.ledger,
@@ -1051,6 +1057,7 @@ impl ShipState {
             wear_debt: trading.wear_debt,
             purchase_price: trading.purchase_price,
             strategy_genes: profile.strategy_genes,
+            home_island_id: profile.home_island_id,
             planned_target_after_load: trading.planned_target_after_load,
             cargo_changed_this_dock: trading.cargo_changed_this_dock,
             just_sold_resource: trading.just_sold_resource,
@@ -1090,6 +1097,7 @@ impl ShipState {
         profile.efficiency_rating = self.efficiency_rating;
         profile.max_cargo_volume = self.max_cargo_volume;
         profile.strategy_genes = self.strategy_genes;
+        profile.home_island_id = self.home_island_id;
         ship_ledger.ledger = self.ledger;
         ship_ledger.route_memory = self.route_memory;
     }
