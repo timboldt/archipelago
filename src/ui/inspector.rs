@@ -3,7 +3,7 @@
 use bevy::prelude::*;
 
 use crate::components::{
-    Commodity, IslandMarker, SelectedIsland, SelectedShip, ShipArchetype, ShipMarker, ShipMovement,
+    Commodity, IslandMarker, SelectedIsland, SelectedShip, ShipArchetype, ShipMovement,
     ShipProfile, ShipTrading,
 };
 use crate::island::IslandEconomy;
@@ -18,7 +18,6 @@ pub fn update_ship_inspector(
     mut commands: Commands,
     mut inspector_q: Query<(Entity, &mut Text, &mut Node), With<ShipInspectorText>>,
     selected_ship: Query<(&ShipMovement, &ShipTrading, &ShipProfile), With<SelectedShip>>,
-    ship_count: Query<(), With<ShipMarker>>,
 ) {
     // Ensure inspector exists.
     if inspector_q.is_empty() {
@@ -45,8 +44,6 @@ pub fn update_ship_inspector(
     let Ok((_, mut text, mut node)) = inspector_q.single_mut() else {
         return;
     };
-
-    let total_ships = ship_count.iter().count();
 
     let Ok((movement, trading, profile)) = selected_ship.single() else {
         node.display = Display::None;
@@ -93,7 +90,6 @@ pub fn update_ship_inspector(
 
     let mut s = String::new();
     s.push_str("Selected Ship\n");
-    s.push_str(&format!("  Ships: {}\n", total_ships));
     s.push_str(&format!("  Archetype: {}\n", archetype_label));
     s.push_str(&format!("  {}\n", status));
     s.push_str(&format!("  Speed: {:.1}\n", movement.speed));

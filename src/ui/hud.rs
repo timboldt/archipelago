@@ -109,10 +109,13 @@ pub fn update_hud(
     for (i, name) in resource_names.iter().enumerate() {
         hud_text.push_str(&format!("  {}: {:.0}\n", name, total_inventory[i]));
     }
+
+    hud_text.push_str(&format!("\nShips: {}\n", ship_count));
     hud_text.push_str(&format!(
-        "\nShips (CL: {} FR: {} SH: {})\n",
+        "  C: {} F: {} S: {}\n",
         clipper_count, freighter_count, shorthaul_count
     ));
+
     hud_text.push_str(&format!("\nPopulation: {:.0}K\n", total_population));
     hud_text.push_str(&format!("Cash: {:.0}\n", total_cash));
     hud_text.push_str(&format!("Industry: {:.2}\n", avg_infrastructure));
