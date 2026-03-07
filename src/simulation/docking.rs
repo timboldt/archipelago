@@ -1,4 +1,9 @@
 //! Docking-phase processing — exclusive system for cross-entity mutation.
+//!
+//! Each tick, docked ships at each island go through three passes:
+//! 1. **Trade** — sell cargo, settle debts, buy new cargo, handle bankruptcy
+//! 2. **Ledger merge** — surviving ships contribute knowledge to island ledger
+//! 3. **Departure planning** — ships sync merged ledger and pick next destination
 
 use bevy::prelude::*;
 use std::collections::HashSet;
@@ -27,6 +32,134 @@ fn environmental_tuning(
     let mut tuning = *base;
     tuning.global_friction_mult *= crowding_factor;
     tuning
+}
+
+/// Execute trade transactions for all ships at one island: sell, settle debts,
+/// buy cargo, handle bankruptcy. Returns per-ship flags for downstream passes.
+#[allow(clippy::too_many_arguments)]
+fn trade_pass(
+    ships: &mut [(Entity, ShipState)],
+    island_id: usize,
+    island_economy: &mut IslandEconomy,
+    planning_tuning: &PlanningTuning,
+    island_positions: &[Vec2],
+    route_departures: &[Vec<f32>],
+    tick: u64,
+    sold_and_empty: &mut [bool],
+    bankrupt_local: &mut [bool],
+    bankrupt_entities: &mut HashSet<Entity>,
+) {
+    let ship_entities_local: Vec<Entity> = ships.iter().map(|(e, _)| *e).collect();
+
+    for (local_idx, (_, ship)) in ships.iter_mut().enumerate() {
+        let ship_tuning = ship.effective_tuning(planning_tuning);
+        ship.begin_dock_tick();
+
+        let settled_any = ship.trade_settle_until_stuck(
+            island_id,
+            island_economy,
+            &ship_tuning,
+            MAX_DOCK_SETTLEMENT_STEPS,
+        );
+        if settled_any {
+            sold_and_empty[local_idx] = ship.has_no_cargo();
+        }
+
+        let _ = ship.settle_service_debt(island_economy);
+
+        let outbound_recent_departures =
+            route_departures.get(island_id).cloned().unwrap_or_default();
+        let exclude = ship.just_sold_resource();
+        let ship_tuning = ship.effective_tuning(planning_tuning);
+        let load_context = LoadPlanningContext {
+            current_island_id: island_id,
+            island_positions,
+            current_tick: tick,
+            tuning: &ship_tuning,
+            outbound_recent_departures: &outbound_recent_departures,
+        };
+        let _ = ship.trade_load_if_empty(island_economy, exclude, &load_context);
+        if ship.cargo_changed_this_dock() {
+            let _ = ship.pay_dynamic_docking_tax(island_economy);
+        }
+
+        if island_economy.cash < 0.0 {
+            let deficit = (-island_economy.cash).min(ship.current_cash().max(0.0));
+            ship.deduct_cash(deficit);
+            island_economy.cash += deficit;
+        }
+
+        if ship.is_bankrupt() {
+            island_economy.apply_ship_bankruptcy_settlement(ship.removal_cash_settlement());
+            bankrupt_local[local_idx] = true;
+            bankrupt_entities.insert(ship_entities_local[local_idx]);
+        }
+    }
+}
+
+/// Merge ship ledgers into the island's ledger using a buffer to prevent
+/// ordering effects within a single tick.
+fn ledger_merge_pass(
+    ships: &[(Entity, ShipState)],
+    island_id: usize,
+    island_ledger: &mut Vec<crate::components::PriceEntry>,
+    sold_and_empty: &[bool],
+    bankrupt_local: &[bool],
+) {
+    let mut island_ledger_buffer = island_ledger.clone();
+    for (local_idx, (_, ship)) in ships.iter().enumerate() {
+        if sold_and_empty[local_idx] || bankrupt_local[local_idx] {
+            continue;
+        }
+        ship.contribute_ledger_to_island_buffer(island_id, &mut island_ledger_buffer);
+    }
+    *island_ledger = island_ledger_buffer;
+}
+
+/// Plan departure targets for docked ships using the post-merge ledger snapshot.
+#[allow(clippy::too_many_arguments)]
+fn departure_planning_pass(
+    ships: &mut [(Entity, ShipState)],
+    island_id: usize,
+    island_economy: &mut IslandEconomy,
+    island_ledger: &[crate::components::PriceEntry],
+    planning_tuning: &PlanningTuning,
+    island_positions: &[Vec2],
+    tick: u64,
+    sold_and_empty: &[bool],
+    bankrupt_local: &[bool],
+    all_departure_targets: &mut Vec<(usize, usize)>,
+    outbound_for_island: &mut [f32],
+) {
+    for (local_idx, (_, ship)) in ships.iter_mut().enumerate() {
+        if sold_and_empty[local_idx] || bankrupt_local[local_idx] {
+            continue;
+        }
+        let has_outbound_target = ship.target_island().is_some_and(|t| t != island_id);
+        if !ship.has_no_cargo() && !ship.cargo_changed_this_dock() && has_outbound_target {
+            continue;
+        }
+
+        let ship_tuning = ship.effective_tuning(planning_tuning);
+        ship.sync_ledger_from_snapshot(island_ledger);
+        if let Some(target_island_id) = ship.plan_next_island(
+            island_id,
+            island_positions,
+            tick,
+            &ship_tuning,
+            outbound_for_island,
+        ) {
+            if target_island_id != island_id {
+                ship.set_target(target_island_id, island_positions[target_island_id]);
+                all_departure_targets.push((island_id, target_island_id));
+                if let Some(slot) = outbound_for_island.get_mut(target_island_id) {
+                    *slot += 1.0;
+                }
+            }
+        } else {
+            let _ = ship.pay_idle_port_fee(island_economy);
+        }
+    }
 }
 
 pub fn process_docked_ships(world: &mut World) {
@@ -113,7 +246,7 @@ pub fn process_docked_ships(world: &mut World) {
         island_economy.mark_seen(tick, island_ledger);
         island_economy.last_trade_tick = tick;
 
-        // Extract ship states.
+        // Extract ship states from ECS components.
         let mut ships: Vec<(Entity, ShipState)> = Vec::with_capacity(ship_entity_list.len());
         for &ship_entity in ship_entity_list {
             let entity_ref = world.entity(ship_entity);
@@ -127,106 +260,50 @@ pub fn process_docked_ships(world: &mut World) {
             ships.push((ship_entity, ship));
         }
 
-        let ship_entities_local: Vec<Entity> = ships.iter().map(|(e, _)| *e).collect();
         let mut sold_and_empty = vec![false; ships.len()];
         let mut bankrupt_local = vec![false; ships.len()];
 
-        // Pass 1: trade transactions.
-        for (local_idx, (_, ship)) in ships.iter_mut().enumerate() {
-            let ship_tuning = ship.effective_tuning(&planning_tuning);
-            ship.begin_dock_tick();
-
-            let settled_any = ship.trade_settle_until_stuck(
-                island_id,
-                &mut island_economy,
-                &ship_tuning,
-                MAX_DOCK_SETTLEMENT_STEPS,
-            );
-            if settled_any {
-                sold_and_empty[local_idx] = ship.has_no_cargo();
-            }
-
-            let _ = ship.settle_service_debt(&mut island_economy);
-
-            let outbound_recent_departures = route_departures_clone
-                .get(island_id)
-                .cloned()
-                .unwrap_or_default();
-            let exclude = ship.just_sold_resource();
-            let ship_tuning = ship.effective_tuning(&planning_tuning);
-            let load_context = LoadPlanningContext {
-                current_island_id: island_id,
-                island_positions: &island_positions,
-                current_tick: tick,
-                tuning: &ship_tuning,
-                outbound_recent_departures: &outbound_recent_departures,
-            };
-            let _ = ship.trade_load_if_empty(&mut island_economy, exclude, &load_context);
-            if ship.cargo_changed_this_dock() {
-                let _ = ship.pay_dynamic_docking_tax(&mut island_economy);
-            }
-
-            if island_economy.cash < 0.0 {
-                let deficit = (-island_economy.cash).min(ship.current_cash().max(0.0));
-                ship.deduct_cash(deficit);
-                island_economy.cash += deficit;
-            }
-
-            if ship.is_bankrupt() {
-                island_economy.apply_ship_bankruptcy_settlement(ship.removal_cash_settlement());
-                bankrupt_local[local_idx] = true;
-                bankrupt_entities.insert(ship_entities_local[local_idx]);
-            }
-        }
+        trade_pass(
+            &mut ships,
+            island_id,
+            &mut island_economy,
+            &planning_tuning,
+            &island_positions,
+            &route_departures_clone,
+            tick,
+            &mut sold_and_empty,
+            &mut bankrupt_local,
+            &mut bankrupt_entities,
+        );
 
         island_economy.recompute_local_prices_with_ledger(tick, island_ledger);
 
-        // Pass 2: ledger merge.
-        let mut island_ledger_buffer = island_ledger.clone();
-        for (local_idx, (_, ship)) in ships.iter().enumerate() {
-            if sold_and_empty[local_idx] || bankrupt_local[local_idx] {
-                continue;
-            }
-            ship.contribute_ledger_to_island_buffer(island_id, &mut island_ledger_buffer);
-        }
-        *island_ledger = island_ledger_buffer;
+        ledger_merge_pass(
+            &ships,
+            island_id,
+            island_ledger,
+            &sold_and_empty,
+            &bankrupt_local,
+        );
 
-        // Pass 3: departure planning.
-        let island_ledger_snapshot = island_ledger.clone();
         let mut outbound_for_island = route_departures_clone
             .get(island_id)
             .cloned()
             .unwrap_or_default();
 
-        for (local_idx, (_, ship)) in ships.iter_mut().enumerate() {
-            if sold_and_empty[local_idx] || bankrupt_local[local_idx] {
-                continue;
-            }
-            let has_outbound_target = ship.target_island().is_some_and(|t| t != island_id);
-            if !ship.has_no_cargo() && !ship.cargo_changed_this_dock() && has_outbound_target {
-                continue;
-            }
-
-            let ship_tuning = ship.effective_tuning(&planning_tuning);
-            ship.sync_ledger_from_snapshot(&island_ledger_snapshot);
-            if let Some(target_island_id) = ship.plan_next_island(
-                island_id,
-                &island_positions,
-                tick,
-                &ship_tuning,
-                &outbound_for_island,
-            ) {
-                if target_island_id != island_id {
-                    ship.set_target(target_island_id, island_positions[target_island_id]);
-                    all_departure_targets.push((island_id, target_island_id));
-                    if let Some(slot) = outbound_for_island.get_mut(target_island_id) {
-                        *slot += 1.0;
-                    }
-                }
-            } else {
-                let _ = ship.pay_idle_port_fee(&mut island_economy);
-            }
-        }
+        departure_planning_pass(
+            &mut ships,
+            island_id,
+            &mut island_economy,
+            island_ledger,
+            &planning_tuning,
+            &island_positions,
+            tick,
+            &sold_and_empty,
+            &bankrupt_local,
+            &mut all_departure_targets,
+            &mut outbound_for_island,
+        );
 
         // Put island components back.
         world.entity_mut(island_entity).insert(island_economy);
@@ -249,7 +326,6 @@ pub fn process_docked_ships(world: &mut World) {
             }
             let new_pos = ship.pos();
             let (movement, trading, profile, ship_ledger_comp) = ship.into_components();
-            // Each get_mut is a separate temporary borrow — no conflict.
             *world.get_mut::<Position>(entity).unwrap() = Position(new_pos);
             *world.get_mut::<ShipMovement>(entity).unwrap() = movement;
             *world.get_mut::<ShipTrading>(entity).unwrap() = trading;

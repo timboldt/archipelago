@@ -4,7 +4,9 @@ use bevy::prelude::*;
 
 use crate::components::{IslandMarker, ShipArchetype, ShipMarker, ShipProfile, COMMODITY_COUNT};
 use crate::island::IslandEconomy;
-use crate::resources::{FrameTimingsRes, PlanningTuningRes, PERF_HUD_UPDATE_INTERVAL_SECS};
+use crate::resources::{
+    FrameTimingsRes, PlanningTuningRes, TimeScale, PERF_HUD_UPDATE_INTERVAL_SECS,
+};
 use crate::ship::TARGET_SHIPS_PER_ISLAND;
 
 #[derive(Component)]
@@ -34,6 +36,7 @@ pub fn update_hud(
     islands: Query<&IslandEconomy, With<IslandMarker>>,
     ships: Query<&ShipProfile, With<ShipMarker>>,
     planning_tuning: Res<PlanningTuningRes>,
+    time_scale: Res<TimeScale>,
     mut frame_timings: ResMut<FrameTimingsRes>,
     time: Res<Time>,
 ) {
@@ -118,6 +121,7 @@ pub fn update_hud(
     hud_text.push_str(&format!("\nPopulation: {:.0}K\n", total_population));
     hud_text.push_str(&format!("Cash: {:.0}\n", total_cash));
     hud_text.push_str(&format!("Industry: {:.2}\n", avg_infrastructure));
+    hud_text.push_str(&format!("Speed: {:.2}x\n", time_scale.0));
     hud_text.push_str(&format!("Friction x: {:.2}\n", friction_mult));
     hud_text.push_str("\nPerf (ms)\n");
     // hud_text.push_str(&format!("  Economy: {:.2}\n", frame_timings.economy_ms));

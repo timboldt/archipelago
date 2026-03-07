@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use crate::components::{ShipMarker, ShipMovement, ShipProfile, ShipTrading};
 use crate::resources::{FrameTimingsRes, PlanningTuningRes, TimeScale};
-use crate::ship::{ShipState, TARGET_SHIPS_PER_ISLAND};
+use crate::ship::{ShipState, DOCKED_PORT_FEE_MULTIPLIER, TARGET_SHIPS_PER_ISLAND};
 
 pub fn apply_maritime_friction(
     mut query: Query<(&mut ShipMovement, &mut ShipTrading, &ShipProfile), With<ShipMarker>>,
@@ -36,7 +36,7 @@ pub fn apply_maritime_friction(
 
             let mut labor = labor_rate * dt.max(0.0) * global_friction_mult;
             if trading.docked_at.is_some() {
-                labor *= 1.5; // DOCKED_PORT_FEE_MULTIPLIER
+                labor *= DOCKED_PORT_FEE_MULTIPLIER;
             }
 
             // Wear cost

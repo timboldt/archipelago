@@ -291,6 +291,9 @@ fn handle_time_scale_input(keys: Res<ButtonInput<KeyCode>>, mut time_scale: ResM
     if keys.just_pressed(KeyCode::Equal) {
         time_scale.0 = (time_scale.0 + TIME_SCALE_STEP).clamp(TIME_SCALE_MIN, TIME_SCALE_MAX);
     }
+    if keys.just_pressed(KeyCode::Backslash) {
+        time_scale.0 = 1.0;
+    }
 }
 
 fn handle_camera_input(

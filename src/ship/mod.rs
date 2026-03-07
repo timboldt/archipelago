@@ -17,18 +17,27 @@ use crate::components::{
 };
 use crate::island::IslandEconomy;
 
+/// Units of commodity bought or sold per dock trade action.
 const TRADE_ACTION_VOLUME: f32 = 18.0;
+/// Cash each ship starts with.
 pub const STARTING_CASH: f32 = 400.0;
+/// Default bid/ask spread fraction applied to market prices.
 const DEFAULT_MARKET_SPREAD: f32 = 0.10;
+/// EMA learning rate for route profitability history.
 const ROUTE_LEARNING_RATE: f32 = 0.20;
+/// Per-tick decay on route profitability memory.
 const ROUTE_LEARNING_DECAY: f32 = 0.98;
+/// Base cargo volume capacity before archetype scaling.
 const BASE_CARGO_VOLUME_CAPACITY: f32 = 22.0;
+/// Per-tick labor cost (crew wages) base rate.
 pub const BASE_LABOR_RATE: f32 = 0.0002;
+/// Per-distance wear cost base rate.
 pub const BASE_WEAR_RATE: f32 = 0.00006;
-#[allow(dead_code)]
+/// Minimum sell price as a fraction of the purchase price.
 const RESERVE_PRICE_FLOOR: f32 = 0.60;
+/// Per-tick utility penalty ramp while idling in dock.
 const DOCK_IDLE_RISK_RAMP_PER_TICK: f32 = 0.015;
-#[allow(dead_code)]
+/// Maximum allowed idle-dock utility floor before forced departure.
 const MAX_DOCK_IDLE_RISK_ALLOWANCE: f32 = 1.5;
 
 #[derive(Clone, Copy, Debug)]
@@ -59,21 +68,35 @@ impl Default for PlanningTuning {
 /// Target fleet size per island, used by friction, fleet evolution, and HUD.
 pub const TARGET_SHIPS_PER_ISLAND: f32 = 3.0;
 
+/// Minimum ship speed (world units per tick).
 const MIN_SHIP_SPEED: f32 = 120.0;
+/// Maximum ship speed (world units per tick).
 const MAX_SHIP_SPEED: f32 = 600.0;
-#[allow(dead_code)]
-const DOCKED_PORT_FEE_MULTIPLIER: f32 = 1.5;
+/// Labor cost multiplier applied while docked (port fees).
+pub(crate) const DOCKED_PORT_FEE_MULTIPLIER: f32 = 1.5;
+/// Extra wear multiplier when cargo load is heavy.
 pub(crate) const HEAVY_LOAD_WEAR_MULTIPLIER: f32 = 1.1;
+/// Negative cash threshold that triggers bankruptcy/scuttle.
 const BANKRUPTCY_CASH_FLOOR: f32 = -20.0;
+/// Base docking tax rate applied on arrival.
 const BASE_DOCKING_TAX_RATE: f32 = 0.0015;
+/// Maximum docking tax rate cap.
 const MAX_DOCKING_TAX_RATE: f32 = 0.02;
+/// How steeply docking tax rises with liquidity imbalance.
 const LIQUIDITY_IMBALANCE_TAX_SLOPE: f32 = 0.01;
+/// Fraction of cash reserved before docking tax applies.
 const DOCKING_TAX_CASH_RESERVE_MULTIPLIER: f32 = 0.75;
+/// Per-tick fee charged to ships idling in port beyond the grace period.
 const IDLE_PORT_FEE_PER_TICK: f32 = STARTING_CASH * 0.002;
+/// Ticks of free docking before idle port fees kick in.
 const IDLE_FEE_GRACE_TICKS: u32 = 300;
+/// Floor on ship efficiency rating (prevents extreme under-performance).
 const MIN_EFFICIENCY_RATING: f32 = 0.80;
+/// Ceiling on ship efficiency rating.
 const MAX_EFFICIENCY_RATING: f32 = 1.30;
+/// Minimum gene scaling factor for strategy gene randomization.
 const MIN_GENE_SCALE: f32 = 0.80;
+/// Maximum gene scaling factor for strategy gene randomization.
 const MAX_GENE_SCALE: f32 = 1.20;
 
 /// Unified ship state used by simulation methods. In the ECS, this is
@@ -164,7 +187,7 @@ impl ShipState {
 
     fn recompute_operational_traits(&mut self) {
         let archetype = self.archetype;
-        let (speed_mult, capacity_mult, _, _) = Self::profile_multipliers(archetype);
+        let (speed_mult, capacity_mult, _, _) = Self::profile_multipliers_static(archetype);
 
         let efficiency_speed_factor =
             (0.92 + 0.30 * (self.efficiency_rating - 1.0)).clamp(0.85, 1.10);
@@ -176,10 +199,6 @@ impl ShipState {
         self.max_cargo_volume =
             (BASE_CARGO_VOLUME_CAPACITY * capacity_mult * efficiency_capacity_factor)
                 .clamp(8.0, 80.0);
-    }
-
-    fn profile_multipliers(archetype: ShipArchetype) -> (f32, f32, f32, f32) {
-        Self::profile_multipliers_static(archetype)
     }
 
     pub fn profile_multipliers_static(archetype: ShipArchetype) -> (f32, f32, f32, f32) {
@@ -250,13 +269,13 @@ impl ShipState {
     }
 
     pub fn wear_rate(&self) -> f32 {
-        let (_, _, _, wear_mult) = Self::profile_multipliers(self.archetype);
+        let (_, _, _, wear_mult) = Self::profile_multipliers_static(self.archetype);
         let efficiency_factor = (1.20 - 0.40 * self.efficiency_rating).clamp(0.65, 1.15);
         BASE_WEAR_RATE * wear_mult * efficiency_factor
     }
 
     pub fn labor_rate(&self) -> f32 {
-        let (_, _, labor_mult, _) = Self::profile_multipliers(self.archetype);
+        let (_, _, labor_mult, _) = Self::profile_multipliers_static(self.archetype);
         let efficiency_factor = (1.20 - 0.35 * self.efficiency_rating).clamp(0.70, 1.15);
         BASE_LABOR_RATE * labor_mult * efficiency_factor
     }
@@ -651,7 +670,7 @@ impl ShipState {
 
     // ── Ledger sync ────────────────────────────────────────────────────
 
-    pub fn sync_ledger_from_snapshot(&mut self, island_ledger_snapshot: &PriceLedger) {
+    pub fn sync_ledger_from_snapshot(&mut self, island_ledger_snapshot: &[PriceEntry]) {
         let len = self.ledger.len().min(island_ledger_snapshot.len());
         for (i, ship_entry) in self.ledger.iter_mut().enumerate().take(len) {
             if island_ledger_snapshot[i].tick_updated >= ship_entry.tick_updated {
@@ -1260,5 +1279,140 @@ mod tests {
         let target = ship.plan_next_island(0, &positions, 200, &tuning, &departures);
 
         assert_eq!(target, Some(2));
+    }
+
+    #[test]
+    fn docking_cycle_sell_merge_buy_depart() {
+        // Integration test: create 2 islands and 1 ship, run a manual docking cycle.
+        let mut rng = StdRng::seed_from_u64(55);
+        let (mut island0, ledger0) = IslandEconomy::new(0, 2, &mut rng);
+        let (mut island1, _ledger1) = IslandEconomy::new(1, 2, &mut rng);
+
+        // Setup: island0 has plenty of grain, island1 wants grain (high price).
+        island0.inventory[Commodity::Grain.idx()] = 500.0;
+        island0.local_prices[Commodity::Grain.idx()] = 10.0;
+        island0.cash = 5000.0;
+        island1.inventory[Commodity::Grain.idx()] = 5.0;
+        island1.local_prices[Commodity::Grain.idx()] = 200.0;
+        island1.cash = 5000.0;
+
+        // Ship starts docked at island1 with grain cargo.
+        let mut ship = ShipState::new(Vec2::new(10.0, 0.0), 300.0, 2, 1);
+        ship.cash = 1000.0;
+        ship.cargo = Some((Commodity::Grain, 15.0));
+        ship.purchase_price = 10.0;
+        ship.docked_at = Some(1);
+
+        // Update ledger with island1's info so ship knows about it.
+        ship.ledger[0].prices = island0.local_prices;
+        ship.ledger[0].inventories = island0.inventory;
+        ship.ledger[0].cash = island0.cash;
+        ship.ledger[0].tick_updated = 100;
+        ship.ledger[1].prices = island1.local_prices;
+        ship.ledger[1].inventories = island1.inventory;
+        ship.ledger[1].cash = island1.cash;
+        ship.ledger[1].tick_updated = 100;
+
+        let tuning = PlanningTuning::default();
+        let ship_tuning = ship.effective_tuning(&tuning);
+
+        // Step 1: sell cargo at island1.
+        ship.begin_dock_tick();
+        let _settled = ship.trade_settle_until_stuck(1, &mut island1, &ship_tuning, 3);
+        assert!(ship.has_no_cargo(), "Ship should have sold its cargo");
+        let cash_after_sell = ship.current_cash();
+        assert!(
+            cash_after_sell > 1000.0,
+            "Ship should have earned cash from selling"
+        );
+
+        // Step 2: settle service debt.
+        let _ = ship.settle_service_debt(&mut island1);
+
+        // Step 3: ledger merge — ship contributes to island ledger.
+        let mut island_ledger_buf = ledger0.clone();
+        ship.contribute_ledger_to_island_buffer(1, &mut island_ledger_buf);
+        // Island ledger should now have data from the ship's knowledge.
+        assert!(island_ledger_buf[0].tick_updated > 0);
+
+        // Step 4: buy cargo for next leg.
+        let departures = [0.0_f32, 0.0_f32];
+        let positions = [Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0)];
+        let ctx = LoadPlanningContext {
+            current_island_id: 1,
+            island_positions: &positions,
+            current_tick: 100,
+            tuning: &ship_tuning,
+            outbound_recent_departures: &departures,
+        };
+        let _ = ship.trade_load_if_empty(&mut island1, ship.just_sold_resource(), &ctx);
+
+        // Step 5: plan departure — sync merged ledger and verify no panic.
+        ship.sync_ledger_from_snapshot(&island_ledger_buf);
+        let _target = ship.plan_next_island(1, &positions, 100, &ship_tuning, &departures);
+        // Planning may return None if no profitable route exists with only 2 islands,
+        // but the important thing is the full cycle ran without panic.
+    }
+
+    #[test]
+    fn daughter_ship_spawns_with_mutated_traits() {
+        let mut rng = StdRng::seed_from_u64(99);
+        let mut parent = ShipState::new(Vec2::new(100.0, 200.0), 400.0, 3, 0);
+        parent.cash = 10_000.0;
+
+        let daughter = parent
+            .spawn_daughter(0.10, &mut rng)
+            .expect("Wealthy parent should spawn a daughter");
+
+        // Daughter should be near parent position.
+        assert!(daughter.pos().distance(parent.pos()) < 20.0);
+        // Daughter should have some cash.
+        assert!(daughter.current_cash() > 0.0);
+        // Daughter should have a ledger of the same size.
+        assert_eq!(daughter.ledger.len(), parent.ledger.len());
+    }
+
+    #[test]
+    fn scuttle_threshold_behavior() {
+        let ship = ShipState::new(Vec2::new(0.0, 0.0), 300.0, 2, 0);
+        // A fresh ship with STARTING_CASH should be above scuttle threshold.
+        assert!(ship.estimated_net_worth() > STARTING_CASH * 0.35);
+
+        let mut broke_ship = ShipState::new(Vec2::new(0.0, 0.0), 300.0, 2, 0);
+        broke_ship.cash = 10.0;
+        broke_ship.labor_debt = 100.0;
+        broke_ship.wear_debt = 100.0;
+        // Ship with high debts should have low net worth.
+        assert!(broke_ship.estimated_net_worth() < STARTING_CASH * 0.35);
+    }
+
+    #[test]
+    fn stress_1000_ticks_no_nan_or_panic() {
+        // Run 1000 ticks of island economy to verify no NaN/infinity.
+        let mut rng = StdRng::seed_from_u64(42);
+        let num_islands = 5;
+        let mut economies: Vec<(IslandEconomy, Vec<PriceEntry>)> = (0..num_islands)
+            .map(|id| IslandEconomy::new(id, num_islands, &mut rng))
+            .collect();
+
+        for tick in 0..1000u64 {
+            for (economy, ledger) in &mut economies {
+                economy.produce_consume_and_price(1.0, tick, ledger);
+            }
+        }
+
+        for (economy, _) in &economies {
+            for &inv in &economy.inventory {
+                assert!(inv.is_finite(), "Inventory became non-finite");
+                assert!(inv >= 0.0, "Inventory went negative");
+            }
+            for &price in &economy.local_prices {
+                assert!(price.is_finite(), "Price became non-finite");
+                assert!(price > 0.0, "Price became non-positive");
+            }
+            assert!(economy.population.is_finite(), "Population non-finite");
+            assert!(economy.population >= 0.0, "Population negative");
+            assert!(economy.cash.is_finite(), "Cash non-finite");
+        }
     }
 }
