@@ -1,30 +1,40 @@
+//! Ship trading, planning, and movement logic.
+//!
+//! The simulation math lives in `ShipState` methods. In the ECS, ship data is
+//! decomposed across several components, but `ShipState` reassembles them for
+//! method calls that need cross-cutting access.
+
+pub mod spawn;
 mod utility;
 
 use ::rand::Rng;
-use macroquad::prelude::Vec2;
+use bevy::prelude::{Mut, Vec2};
 use strum::IntoEnumIterator;
 
-use crate::island::{Island, PriceEntry, PriceLedger, Resource, RESOURCE_COUNT};
+use crate::components::{
+    ask_multiplier, bid_multiplier, Commodity, DockAction, PriceEntry, PriceLedger, ShipArchetype,
+    ShipLedger, ShipMovement, ShipProfile, ShipTrading, StrategyGenes, COMMODITY_COUNT,
+};
+use crate::island::IslandEconomy;
 
 const TRADE_ACTION_VOLUME: f32 = 18.0;
-pub const STARTING_CASH: f32 = 200.0;
+pub const STARTING_CASH: f32 = 400.0;
 const DEFAULT_MARKET_SPREAD: f32 = 0.10;
 const ROUTE_LEARNING_RATE: f32 = 0.20;
 const ROUTE_LEARNING_DECAY: f32 = 0.98;
 const BASE_CARGO_VOLUME_CAPACITY: f32 = 22.0;
-const BASE_LABOR_RATE: f32 = 0.0004; // BASE_MAINTENANCE_RATE * 0.20
-const BASE_WEAR_RATE: f32 = 0.00012; // per distance unit
+pub const BASE_LABOR_RATE: f32 = 0.0002;
+pub const BASE_WEAR_RATE: f32 = 0.00006;
+#[allow(dead_code)]
+const RESERVE_PRICE_FLOOR: f32 = 0.60;
 const DOCK_IDLE_RISK_RAMP_PER_TICK: f32 = 0.015;
+#[allow(dead_code)]
 const MAX_DOCK_IDLE_RISK_ALLOWANCE: f32 = 1.5;
 
 #[derive(Clone, Copy, Debug)]
-/// Environment-level knobs used during route utility and settlement planning.
 pub struct PlanningTuning {
-    /// Multiplier applied to transit friction/cost terms.
     pub global_friction_mult: f32,
-    /// Confidence decay rate applied to stale ledger information.
     pub info_decay_rate: f32,
-    /// Symmetric market spread used for bid/ask conversion.
     pub market_spread: f32,
 }
 
@@ -34,20 +44,6 @@ pub struct LoadPlanningContext<'a> {
     pub current_tick: u64,
     pub tuning: &'a PlanningTuning,
     pub outbound_recent_departures: &'a [f32],
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct LoadDiagnostics {
-    pub blocked_by_last_action: bool,
-    pub remaining_volume: f32,
-    pub dock_idle_ticks: u32,
-    pub utility_floor: f32,
-    pub scanned_pairs: usize,
-    pub feasible_pairs: usize,
-    pub best_utility: f32,
-    pub best_resource: Option<Resource>,
-    pub best_target: Option<usize>,
-    pub best_local_price: f32,
 }
 
 impl Default for PlanningTuning {
@@ -60,68 +56,31 @@ impl Default for PlanningTuning {
     }
 }
 
+/// Target fleet size per island, used by friction, fleet evolution, and HUD.
+pub const TARGET_SHIPS_PER_ISLAND: f32 = 3.0;
+
 const MIN_SHIP_SPEED: f32 = 120.0;
 const MAX_SHIP_SPEED: f32 = 600.0;
+#[allow(dead_code)]
 const DOCKED_PORT_FEE_MULTIPLIER: f32 = 1.5;
-const HEAVY_LOAD_WEAR_MULTIPLIER: f32 = 1.1;
+pub(crate) const HEAVY_LOAD_WEAR_MULTIPLIER: f32 = 1.1;
 const BANKRUPTCY_CASH_FLOOR: f32 = -20.0;
 const BASE_DOCKING_TAX_RATE: f32 = 0.0015;
 const MAX_DOCKING_TAX_RATE: f32 = 0.02;
 const LIQUIDITY_IMBALANCE_TAX_SLOPE: f32 = 0.01;
 const DOCKING_TAX_CASH_RESERVE_MULTIPLIER: f32 = 0.75;
-/// Flat fee per tick charged when a ship cannot plan any departure route,
-/// applied only after IDLE_FEE_GRACE_TICKS of consecutive failed plans.
-const IDLE_PORT_FEE_PER_TICK: f32 = STARTING_CASH * 0.006;
-/// Grace period before idle fee kicks in; prevents penalising ships that are
-/// merely waiting for better market conditions.
-const IDLE_FEE_GRACE_TICKS: u32 = 100;
+const IDLE_PORT_FEE_PER_TICK: f32 = STARTING_CASH * 0.002;
+const IDLE_FEE_GRACE_TICKS: u32 = 300;
 const MIN_EFFICIENCY_RATING: f32 = 0.80;
 const MAX_EFFICIENCY_RATING: f32 = 1.30;
 const MIN_GENE_SCALE: f32 = 0.80;
 const MAX_GENE_SCALE: f32 = 1.20;
 
-#[derive(Clone, Copy, Debug)]
-pub struct StrategyGenes {
-    confidence_decay_scale: f32,
-    risk_tolerance_scale: f32,
-}
-
-impl Default for StrategyGenes {
-    fn default() -> Self {
-        Self {
-            confidence_decay_scale: 1.0,
-            risk_tolerance_scale: 1.0,
-        }
-    }
-}
-
-fn bid_multiplier(market_spread: f32) -> f32 {
-    (1.0 - market_spread.clamp(0.0, 1.8) * 0.5).max(0.05)
-}
-
-fn ask_multiplier(market_spread: f32) -> f32 {
-    1.0 + market_spread.clamp(0.0, 1.8) * 0.5
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-/// Last dock action outcome for a ship.
-pub enum DockAction {
-    None,
-    Sold,
-    Bought,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-/// Broad operational profile for a ship.
-pub enum ShipArchetype {
-    Clipper,
-    Freighter,
-    Shorthaul,
-}
-
-/// Core ship simulation state: movement, cargo, planning, and market knowledge.
-pub struct Ship {
-    pub pos: Vec2,
+/// Unified ship state used by simulation methods. In the ECS, this is
+/// decomposed into ShipMovement, ShipTrading, ShipProfile, and ShipLedger
+/// components. This struct reassembles them for method calls.
+pub struct ShipState {
+    pos: Vec2,
     target: Vec2,
     speed: f32,
     base_speed: f32,
@@ -131,24 +90,25 @@ pub struct Ship {
     target_island_id: Option<usize>,
     docked_at: Option<usize>,
     last_docked_island_id: Option<usize>,
-    cargo: Option<(Resource, f32)>,
-    pub cash: f32,
+    cargo: Option<(Commodity, f32)>,
+    cash: f32,
     labor_debt: f32,
     wear_debt: f32,
-    pub ledger: PriceLedger,
+    ledger: PriceLedger,
     route_memory: Vec<f32>,
     purchase_price: f32,
     strategy_genes: StrategyGenes,
     planned_target_after_load: Option<usize>,
     cargo_changed_this_dock: bool,
     last_step_distance: f32,
-    just_sold_resource: Option<Resource>,
+    just_sold_resource: Option<Commodity>,
     last_dock_action: DockAction,
     dock_idle_ticks: u32,
+    home_island_id: Option<usize>,
 }
 
-impl Ship {
-    /// Creates a ship with the given archetype and randomized trait genes.
+#[allow(dead_code)]
+impl ShipState {
     pub fn new(pos: Vec2, speed: f32, num_islands: usize, docked_island_id: usize) -> Self {
         let mut rng = ::rand::thread_rng();
         let archetype = match rng.gen_range(0u8..3) {
@@ -174,8 +134,8 @@ impl Ship {
             wear_debt: 0.0,
             ledger: vec![
                 PriceEntry {
-                    prices: [0.0; RESOURCE_COUNT],
-                    inventories: [0.0; RESOURCE_COUNT],
+                    prices: [0.0; COMMODITY_COUNT],
+                    inventories: [0.0; COMMODITY_COUNT],
                     cash: 0.0,
                     infrastructure_level: 0.0,
                     tick_updated: 0,
@@ -192,6 +152,7 @@ impl Ship {
             just_sold_resource: None,
             last_dock_action: DockAction::None,
             dock_idle_ticks: 0,
+            home_island_id: None,
         }
         .with_recomputed_traits()
     }
@@ -218,12 +179,90 @@ impl Ship {
     }
 
     fn profile_multipliers(archetype: ShipArchetype) -> (f32, f32, f32, f32) {
-        // (speed, capacity, maintenance, distance_cost)
+        Self::profile_multipliers_static(archetype)
+    }
+
+    pub fn profile_multipliers_static(archetype: ShipArchetype) -> (f32, f32, f32, f32) {
         match archetype {
-            ShipArchetype::Clipper => (1.50, 0.75, 1.50, 1.35),
-            ShipArchetype::Shorthaul => (1.00, 1.00, 0.75, 0.80),
-            ShipArchetype::Freighter => (0.75, 2.00, 1.00, 1.10),
+            // (speed_mult, capacity_mult, labor_mult, wear_mult)
+            ShipArchetype::Clipper => (1.50, 0.50, 1.50, 1.50),
+            ShipArchetype::Shorthaul => (1.00, 1.00, 0.50, 0.80),
+            ShipArchetype::Freighter => (0.75, 2.00, 0.75, 1.00),
         }
+    }
+
+    // ── Accessors ──────────────────────────────────────────────────────
+
+    pub fn pos(&self) -> Vec2 {
+        self.pos
+    }
+    pub fn speed(&self) -> f32 {
+        self.speed
+    }
+    pub fn max_cargo_volume(&self) -> f32 {
+        self.max_cargo_volume
+    }
+    pub fn archetype(&self) -> ShipArchetype {
+        self.archetype
+    }
+    pub fn docked_island(&self) -> Option<usize> {
+        self.docked_at
+    }
+    pub fn last_docked_island(&self) -> Option<usize> {
+        self.docked_at.or(self.last_docked_island_id)
+    }
+    pub fn set_home_island(&mut self, island_id: usize) {
+        self.home_island_id = Some(island_id);
+    }
+    pub fn target_island(&self) -> Option<usize> {
+        self.target_island_id
+    }
+    pub fn current_cargo(&self) -> Option<(Commodity, f32)> {
+        self.cargo
+    }
+    pub fn has_no_cargo(&self) -> bool {
+        self.cargo.is_none()
+    }
+    pub fn just_sold_resource(&self) -> Option<Commodity> {
+        self.just_sold_resource
+    }
+    pub fn cargo_changed_this_dock(&self) -> bool {
+        self.cargo_changed_this_dock
+    }
+    pub fn ledger(&self) -> &PriceLedger {
+        &self.ledger
+    }
+    pub fn ledger_mut(&mut self) -> &mut PriceLedger {
+        &mut self.ledger
+    }
+    pub fn set_cash(&mut self, cash: f32) {
+        self.cash = cash;
+    }
+    pub fn current_cash(&self) -> f32 {
+        self.cash
+    }
+    pub fn deduct_cash(&mut self, amount: f32) {
+        self.cash -= amount;
+    }
+
+    pub fn cargo_volume_used(&self) -> f32 {
+        self.total_cargo_volume()
+    }
+
+    pub fn wear_rate(&self) -> f32 {
+        let (_, _, _, wear_mult) = Self::profile_multipliers(self.archetype);
+        let efficiency_factor = (1.20 - 0.40 * self.efficiency_rating).clamp(0.65, 1.15);
+        BASE_WEAR_RATE * wear_mult * efficiency_factor
+    }
+
+    pub fn labor_rate(&self) -> f32 {
+        let (_, _, labor_mult, _) = Self::profile_multipliers(self.archetype);
+        let efficiency_factor = (1.20 - 0.35 * self.efficiency_rating).clamp(0.70, 1.15);
+        BASE_LABOR_RATE * labor_mult * efficiency_factor
+    }
+
+    fn risk_tolerance(&self) -> f32 {
+        self.strategy_genes.risk_tolerance_scale.max(0.25)
     }
 
     pub fn effective_tuning(&self, base: &PlanningTuning) -> PlanningTuning {
@@ -235,170 +274,30 @@ impl Ship {
         tuned
     }
 
-    fn risk_tolerance(&self) -> f32 {
-        self.strategy_genes.risk_tolerance_scale.max(0.25)
-    }
-
-    fn map_span(island_positions: &[Vec2]) -> f32 {
-        if island_positions.is_empty() {
-            return 1.0;
-        }
-
-        let mut min_x = f32::INFINITY;
-        let mut max_x = f32::NEG_INFINITY;
-        let mut min_y = f32::INFINITY;
-        let mut max_y = f32::NEG_INFINITY;
-
-        for pos in island_positions {
-            min_x = min_x.min(pos.x);
-            max_x = max_x.max(pos.x);
-            min_y = min_y.min(pos.y);
-            max_y = max_y.max(pos.y);
-        }
-
-        (max_x - min_x).max(max_y - min_y).max(1.0)
-    }
-
-    fn max_route_distance_for_planning(&self, island_positions: &[Vec2]) -> f32 {
-        match self.archetype {
-            ShipArchetype::Shorthaul => Self::map_span(island_positions) * 0.20,
-            _ => f32::INFINITY,
+    fn total_cargo_volume(&self) -> f32 {
+        match self.cargo {
+            Some((resource, amount)) => amount.max(0.0) * resource.volume_per_unit(),
+            None => 0.0,
         }
     }
 
-    pub fn spawn_daughter(&mut self, mutation_strength: f32, rng: &mut impl Rng) -> Option<Ship> {
-        let num_islands = self.ledger.len();
-        if num_islands == 0 {
-            return None;
-        }
-        let spawn_island_id = self
-            .docked_island()
-            .or(self.target_island_id)
-            .unwrap_or(0)
-            .min(num_islands - 1);
-
-        let speed_mutation = 1.0 + rng.gen_range(-mutation_strength..mutation_strength);
-        let daughter_base_speed =
-            (self.base_speed * speed_mutation).clamp(MIN_SHIP_SPEED, MAX_SHIP_SPEED);
-
-        let endowment = self.cash * 0.5;
-        self.cash -= endowment;
-
-        let mut daughter = Ship::new(self.pos, daughter_base_speed, num_islands, spawn_island_id);
-        daughter.cash = endowment;
-        daughter.ledger = self.ledger.clone();
-        daughter.route_memory = self.route_memory.clone();
-        if self.docked_island().is_none() {
-            if let Some(target_id) = self.target_island_id {
-                daughter.set_target(target_id.min(num_islands - 1), self.target);
-            }
-        }
-        // Small chance to mutate to a different archetype; otherwise inherit parent's.
-        daughter.archetype = if rng.gen::<f32>() < mutation_strength * 0.5 {
-            match rng.gen_range(0u8..3) {
-                0 => ShipArchetype::Clipper,
-                1 => ShipArchetype::Freighter,
-                _ => ShipArchetype::Shorthaul,
-            }
-        } else {
-            self.archetype
-        };
-        daughter.efficiency_rating = mutate_gene_gaussian(
-            self.efficiency_rating,
-            mutation_strength,
-            rng,
-            MIN_EFFICIENCY_RATING,
-            MAX_EFFICIENCY_RATING,
-        );
-        daughter.recompute_operational_traits();
-
-        daughter.strategy_genes = StrategyGenes {
-            confidence_decay_scale: mutate_gene_gaussian(
-                self.strategy_genes.confidence_decay_scale,
-                mutation_strength,
-                rng,
-                MIN_GENE_SCALE,
-                MAX_GENE_SCALE,
-            ),
-            risk_tolerance_scale: mutate_gene_gaussian(
-                self.strategy_genes.risk_tolerance_scale,
-                mutation_strength,
-                rng,
-                MIN_GENE_SCALE,
-                MAX_GENE_SCALE,
-            ),
-        };
-
-        Some(daughter)
+    fn remaining_cargo_volume(&self) -> f32 {
+        (self.max_cargo_volume - self.total_cargo_volume()).max(0.0)
     }
 
-    pub fn set_target(&mut self, target_island_id: usize, target: Vec2) {
-        self.target = target;
-        self.target_island_id = Some(target_island_id);
-        self.docked_at = None;
-        self.planned_target_after_load = None;
-        self.dock_idle_ticks = 0;
+    fn max_units_for_trade_action(&self, resource: Commodity) -> f32 {
+        TRADE_ACTION_VOLUME / resource.volume_per_unit().max(0.01)
     }
 
-    pub fn seed_initial_market_view(
-        &mut self,
-        islands: &[Island],
-        current_tick: u64,
-        home_island_id: usize,
-        rng: &mut impl Rng,
-    ) {
-        let count = self.ledger.len().min(islands.len());
-        for (island_id, island) in islands.iter().enumerate().take(count) {
-            let mut prices = [0.0; RESOURCE_COUNT];
-            let mut inventories = [0.0; RESOURCE_COUNT];
-
-            for resource in Resource::iter() {
-                let idx = resource.idx();
-                let price_noise = rng.gen_range(0.82..1.18);
-                let inventory_noise = rng.gen_range(0.70..1.30);
-                prices[idx] = (island.local_prices[idx] * price_noise).max(0.0);
-                inventories[idx] = (island.inventory[idx] * inventory_noise).max(0.0);
-            }
-
-            let observed_cash = (island.cash * rng.gen_range(0.75..1.25)).max(0.0);
-            let observed_infra = (island.infrastructure_level * rng.gen_range(0.90..1.10)).max(0.0);
-            let age = rng.gen_range(40_u64..=420_u64);
-            let observed_tick = current_tick.saturating_sub(age);
-
-            self.ledger[island_id] = PriceEntry {
-                prices,
-                inventories,
-                cash: observed_cash,
-                infrastructure_level: observed_infra,
-                tick_updated: observed_tick,
-                last_seen_tick: observed_tick,
-            };
-        }
-
-        if home_island_id < count {
-            let island = &islands[home_island_id];
-            self.ledger[home_island_id] = PriceEntry {
-                prices: island.local_prices,
-                inventories: island.inventory,
-                cash: island.cash,
-                infrastructure_level: island.infrastructure_level,
-                tick_updated: current_tick,
-                last_seen_tick: current_tick,
-            };
-        }
+    fn load_utility_floor(&self) -> f32 {
+        -((self.dock_idle_ticks as f32) * DOCK_IDLE_RISK_RAMP_PER_TICK)
+            .min(MAX_DOCK_IDLE_RISK_ALLOWANCE)
     }
 
-    /// Returns the currently docked island id, if any.
-    pub fn docked_island(&self) -> Option<usize> {
-        self.docked_at
+    fn total_service_debt(&self) -> f32 {
+        self.labor_debt.max(0.0) + self.wear_debt.max(0.0)
     }
 
-    /// Returns current dock id or last known dock id if in transit.
-    pub fn last_docked_island(&self) -> Option<usize> {
-        self.docked_at.or(self.last_docked_island_id)
-    }
-
-    /// Estimates current ship net worth (cash + conservative cargo - service debt).
     pub fn estimated_net_worth(&self) -> f32 {
         let mut net_worth = self.cash.max(0.0);
         if let Some((resource, amount)) = self.cargo {
@@ -415,6 +314,48 @@ impl Ship {
         }
         net_worth - self.total_service_debt()
     }
+
+    pub fn is_bankrupt(&self) -> bool {
+        self.cash - self.total_service_debt() < BANKRUPTCY_CASH_FLOOR
+    }
+
+    pub fn removal_cash_settlement(&self) -> f32 {
+        self.cash.max(0.0)
+    }
+
+    // ── Movement ───────────────────────────────────────────────────────
+
+    pub fn update(&mut self, dt: f32) -> Option<usize> {
+        let to_target = self.target - self.pos;
+        let dist = to_target.length();
+        self.last_step_distance = 0.0;
+        if dist < 1.0 {
+            self.docked_at = self.target_island_id;
+            self.last_docked_island_id = self.docked_at;
+            return self.docked_at;
+        }
+        let step = self.speed * dt;
+        self.last_step_distance = step.min(dist);
+        if step >= dist {
+            self.pos = self.target;
+            self.docked_at = self.target_island_id;
+            self.last_docked_island_id = self.docked_at;
+            self.docked_at
+        } else {
+            self.pos += to_target.normalize() * step;
+            None
+        }
+    }
+
+    pub fn set_target(&mut self, target_island_id: usize, target: Vec2) {
+        self.target = target;
+        self.target_island_id = Some(target_island_id);
+        self.docked_at = None;
+        self.planned_target_after_load = None;
+        self.dock_idle_ticks = 0;
+    }
+
+    // ── Friction ───────────────────────────────────────────────────────
 
     pub fn apply_maritime_friction(&mut self, dt: f32, global_friction_mult: f32) {
         let mut labor = self.labor_rate() * dt.max(0.0) * global_friction_mult;
@@ -439,81 +380,7 @@ impl Ship {
         self.last_step_distance = 0.0;
     }
 
-    /// Returns true when cash after service debt falls below bankruptcy floor.
-    pub fn is_bankrupt(&self) -> bool {
-        self.cash - self.total_service_debt() < BANKRUPTCY_CASH_FLOOR
-    }
-
-    /// Returns hull-derived operational archetype.
-    pub fn archetype(&self) -> ShipArchetype {
-        self.archetype
-    }
-
-    pub fn speed(&self) -> f32 {
-        self.speed
-    }
-
-    pub fn max_cargo_volume(&self) -> f32 {
-        self.max_cargo_volume
-    }
-
-    pub fn cargo_volume_used(&self) -> f32 {
-        self.total_cargo_volume()
-    }
-
-    pub fn wear_rate(&self) -> f32 {
-        let (_, _, _, wear_mult) = Self::profile_multipliers(self.archetype);
-        let efficiency_factor = (1.20 - 0.40 * self.efficiency_rating).clamp(0.65, 1.15);
-        BASE_WEAR_RATE * wear_mult * efficiency_factor
-    }
-
-    pub fn labor_rate(&self) -> f32 {
-        let (_, _, labor_mult, _) = Self::profile_multipliers(self.archetype);
-        let efficiency_factor = (1.20 - 0.35 * self.efficiency_rating).clamp(0.70, 1.15);
-        BASE_LABOR_RATE * labor_mult * efficiency_factor
-    }
-
-    /// Returns current target island id while en route.
-    pub fn target_island(&self) -> Option<usize> {
-        self.target_island_id
-    }
-
-    /// Returns current cargo as (resource, amount) if any.
-    pub fn current_cargo(&self) -> Option<(Resource, f32)> {
-        self.cargo
-    }
-
-    pub fn has_no_cargo(&self) -> bool {
-        self.cargo.is_none()
-    }
-
-    fn total_cargo_volume(&self) -> f32 {
-        match self.cargo {
-            Some((resource, amount)) => amount.max(0.0) * resource.volume_per_unit(),
-            None => 0.0,
-        }
-    }
-
-    fn remaining_cargo_volume(&self) -> f32 {
-        (self.max_cargo_volume - self.total_cargo_volume()).max(0.0)
-    }
-
-    fn max_units_for_trade_action(&self, resource: Resource) -> f32 {
-        TRADE_ACTION_VOLUME / resource.volume_per_unit().max(0.01)
-    }
-
-    fn load_utility_floor(&self) -> f32 {
-        -((self.dock_idle_ticks as f32) * DOCK_IDLE_RISK_RAMP_PER_TICK)
-            .min(MAX_DOCK_IDLE_RISK_ALLOWANCE)
-    }
-
-    pub fn just_sold_resource(&self) -> Option<Resource> {
-        self.just_sold_resource
-    }
-
-    pub fn cargo_changed_this_dock(&self) -> bool {
-        self.cargo_changed_this_dock
-    }
+    // ── Docking / Trading ──────────────────────────────────────────────
 
     pub fn begin_dock_tick(&mut self) {
         self.last_dock_action = DockAction::None;
@@ -526,11 +393,7 @@ impl Ship {
         }
     }
 
-    fn total_service_debt(&self) -> f32 {
-        self.labor_debt.max(0.0) + self.wear_debt.max(0.0)
-    }
-
-    pub fn settle_service_debt(&mut self, island: &mut Island) -> f32 {
+    pub fn settle_service_debt(&mut self, island: &mut IslandEconomy) -> f32 {
         let total_debt = self.total_service_debt();
         if total_debt <= 0.0 || self.cash <= 0.0 {
             return 0.0;
@@ -548,7 +411,7 @@ impl Ship {
         payment
     }
 
-    pub fn pay_dynamic_docking_tax(&mut self, island: &mut Island) -> f32 {
+    pub fn pay_dynamic_docking_tax(&mut self, island: &mut IslandEconomy) -> f32 {
         let reserve_cash = STARTING_CASH * DOCKING_TAX_CASH_RESERVE_MULTIPLIER;
         let taxable_cash = (self.cash - reserve_cash).max(0.0);
         if taxable_cash <= 0.0 {
@@ -566,11 +429,7 @@ impl Ship {
         tax
     }
 
-    /// Increments the failed-plan counter and charges a mooring fee once the
-    /// grace period has elapsed.  Prevents ships from idling at port
-    /// indefinitely when no route exists (e.g. a shorthaul ship with no
-    /// reachable destinations).
-    pub fn pay_idle_port_fee(&mut self, island: &mut Island) -> f32 {
+    pub fn pay_idle_port_fee(&mut self, island: &mut IslandEconomy) -> f32 {
         self.dock_idle_ticks = self.dock_idle_ticks.saturating_add(1);
         if self.dock_idle_ticks <= IDLE_FEE_GRACE_TICKS {
             return 0.0;
@@ -581,14 +440,10 @@ impl Ship {
         fee
     }
 
-    pub fn removal_cash_settlement(&self) -> f32 {
-        self.cash.max(0.0)
-    }
-
     pub fn trade_unload_if_carrying(
         &mut self,
         island_id: usize,
-        island: &mut Island,
+        island: &mut IslandEconomy,
         tuning: &PlanningTuning,
     ) -> DockAction {
         if self.last_dock_action != DockAction::None {
@@ -603,6 +458,12 @@ impl Ship {
         }
         let bid_price = island.bid_price(resource, tuning.market_spread);
         if !bid_price.is_finite() || bid_price <= 0.0 {
+            return self.last_dock_action;
+        }
+
+        // Refuse to sell at a big loss — clear target so departure planning picks a better port.
+        if self.purchase_price > 0.0 && bid_price < self.purchase_price * RESERVE_PRICE_FLOOR {
+            self.target_island_id = None;
             return self.last_dock_action;
         }
 
@@ -640,7 +501,7 @@ impl Ship {
     pub fn trade_settle_until_stuck(
         &mut self,
         current_island_id: usize,
-        island: &mut Island,
+        island: &mut IslandEconomy,
         tuning: &PlanningTuning,
         max_steps: usize,
     ) -> bool {
@@ -677,8 +538,8 @@ impl Ship {
 
     pub fn trade_load_if_empty(
         &mut self,
-        island: &mut Island,
-        exclude: Option<Resource>,
+        island: &mut IslandEconomy,
+        exclude: Option<Commodity>,
         context: &LoadPlanningContext<'_>,
     ) -> DockAction {
         if self.last_dock_action != DockAction::None {
@@ -690,9 +551,7 @@ impl Ship {
             return self.last_dock_action;
         }
 
-        // Multi-resource speculation: evaluate (local resource -> destination island) pairs
-        // and buy the resource from the highest-utility pair.
-        let mut chosen_resource: Option<Resource> = None;
+        let mut chosen_resource: Option<Commodity> = None;
         let mut chosen_target: Option<usize> = None;
         let mut chosen_local_price = 0.0;
         let mut best_utility = f32::NEG_INFINITY;
@@ -704,7 +563,7 @@ impl Ship {
             outbound_recent_departures: context.outbound_recent_departures,
         };
 
-        for resource in Resource::iter() {
+        for resource in Commodity::iter() {
             if Some(resource) == exclude {
                 continue;
             }
@@ -790,84 +649,7 @@ impl Ship {
         self.last_dock_action
     }
 
-    pub fn debug_load_diagnostics(
-        &self,
-        island: &Island,
-        exclude: Option<Resource>,
-        context: &LoadPlanningContext<'_>,
-    ) -> LoadDiagnostics {
-        let remaining_volume = self.remaining_cargo_volume();
-        let mut diagnostics = LoadDiagnostics {
-            blocked_by_last_action: self.last_dock_action != DockAction::None,
-            remaining_volume,
-            dock_idle_ticks: self.dock_idle_ticks,
-            utility_floor: self.load_utility_floor(),
-            scanned_pairs: 0,
-            feasible_pairs: 0,
-            best_utility: f32::NEG_INFINITY,
-            best_resource: None,
-            best_target: None,
-            best_local_price: 0.0,
-        };
-
-        if diagnostics.blocked_by_last_action || remaining_volume <= 0.0 {
-            return diagnostics;
-        }
-
-        let utility_context = utility::UtilityContext {
-            island_positions: context.island_positions,
-            max_route_distance: self.max_route_distance_for_planning(context.island_positions),
-            current_tick: context.current_tick,
-            tuning: context.tuning,
-            outbound_recent_departures: context.outbound_recent_departures,
-        };
-
-        for resource in Resource::iter() {
-            if Some(resource) == exclude {
-                continue;
-            }
-            let idx = resource.idx();
-            let local_price = island.ask_price(resource, context.tuning.market_spread);
-            if !local_price.is_finite() || local_price <= 0.0 {
-                continue;
-            }
-            let available = island.inventory[idx].max(0.0);
-            if available <= 0.0 {
-                continue;
-            }
-            let affordable = (self.cash / local_price).max(0.0);
-            let max_units_by_volume = remaining_volume / resource.volume_per_unit().max(0.01);
-            let projected_amount = max_units_by_volume.min(affordable).min(available);
-            if projected_amount <= 0.0 {
-                continue;
-            }
-
-            for target_id in 0..self.ledger.len() {
-                if target_id == context.current_island_id {
-                    continue;
-                }
-                diagnostics.scanned_pairs += 1;
-                let utility = self.calculate_utility(
-                    resource,
-                    target_id,
-                    local_price,
-                    projected_amount,
-                    &utility_context,
-                );
-                if utility.is_finite() {
-                    diagnostics.feasible_pairs += 1;
-                }
-                if utility > diagnostics.best_utility {
-                    diagnostics.best_utility = utility;
-                    diagnostics.best_resource = Some(resource);
-                    diagnostics.best_target = Some(target_id);
-                    diagnostics.best_local_price = local_price;
-                }
-            }
-        }
-
-        diagnostics
-    }
+    // ── Ledger sync ────────────────────────────────────────────────────
 
     pub fn sync_ledger_from_snapshot(&mut self, island_ledger_snapshot: &PriceLedger) {
         let len = self.ledger.len().min(island_ledger_snapshot.len());
@@ -905,6 +687,32 @@ impl Ship {
             if incoming_entry.last_seen_tick > island_ledger_buffer[i].last_seen_tick {
                 island_ledger_buffer[i].last_seen_tick = incoming_entry.last_seen_tick;
             }
+        }
+    }
+
+    // ── Route planning ─────────────────────────────────────────────────
+
+    fn map_span(island_positions: &[Vec2]) -> f32 {
+        if island_positions.is_empty() {
+            return 1.0;
+        }
+        let mut min_x = f32::INFINITY;
+        let mut max_x = f32::NEG_INFINITY;
+        let mut min_y = f32::INFINITY;
+        let mut max_y = f32::NEG_INFINITY;
+        for pos in island_positions {
+            min_x = min_x.min(pos.x);
+            max_x = max_x.max(pos.x);
+            min_y = min_y.min(pos.y);
+            max_y = max_y.max(pos.y);
+        }
+        (max_x - min_x).max(max_y - min_y).max(1.0)
+    }
+
+    fn max_route_distance_for_planning(&self, island_positions: &[Vec2]) -> f32 {
+        match self.archetype {
+            ShipArchetype::Shorthaul => Self::map_span(island_positions) * 0.20,
+            _ => f32::INFINITY,
         }
     }
 
@@ -977,7 +785,7 @@ impl Ship {
             .ledger
             .get(current_island_id)
             .map(|entry| entry.prices)
-            .unwrap_or([0.0; RESOURCE_COUNT]);
+            .unwrap_or([0.0; COMMODITY_COUNT]);
 
         for target_id in 0..self.ledger.len() {
             if target_id == current_island_id {
@@ -985,7 +793,7 @@ impl Ship {
             }
 
             let mut best_resource_utility = f32::NEG_INFINITY;
-            for resource in Resource::iter() {
+            for resource in Commodity::iter() {
                 let buy_price =
                     current_prices[resource.idx()] * ask_multiplier(tuning.market_spread);
                 let lot_size = self
@@ -1017,7 +825,7 @@ impl Ship {
         }
     }
 
-    fn median_price_for_resource(&self, resource: Resource) -> f32 {
+    fn median_price_for_resource(&self, resource: Commodity) -> f32 {
         let index = resource.idx();
         let mut prices: Vec<f32> = self
             .ledger
@@ -1060,27 +868,238 @@ impl Ship {
         }
     }
 
-    /// Move toward target. Returns the island id when docking this tick.
-    pub fn update(&mut self, dt: f32) -> Option<usize> {
-        let to_target = self.target - self.pos;
-        let dist = to_target.length();
-        self.last_step_distance = 0.0;
-        if dist < 1.0 {
-            self.docked_at = self.target_island_id;
-            self.last_docked_island_id = self.docked_at;
-            return self.docked_at;
+    // ── Seeding ────────────────────────────────────────────────────────
+
+    pub fn seed_initial_market_view(
+        &mut self,
+        islands: &[(Vec2, IslandEconomy, PriceLedger)],
+        current_tick: u64,
+        home_island_id: usize,
+        rng: &mut impl Rng,
+    ) {
+        let count = self.ledger.len().min(islands.len());
+        for (island_id, (_, economy, _)) in islands.iter().enumerate().take(count) {
+            let mut prices = [0.0; COMMODITY_COUNT];
+            let mut inventories = [0.0; COMMODITY_COUNT];
+
+            for resource in Commodity::iter() {
+                let idx = resource.idx();
+                let price_noise = rng.gen_range(0.82..1.18);
+                let inventory_noise = rng.gen_range(0.70..1.30);
+                prices[idx] = (economy.local_prices[idx] * price_noise).max(0.0);
+                inventories[idx] = (economy.inventory[idx] * inventory_noise).max(0.0);
+            }
+
+            let observed_cash = (economy.cash * rng.gen_range(0.75..1.25)).max(0.0);
+            let observed_infra =
+                (economy.infrastructure_level * rng.gen_range(0.90..1.10)).max(0.0);
+            let age = rng.gen_range(40_u64..=420_u64);
+            let observed_tick = current_tick.saturating_sub(age);
+
+            self.ledger[island_id] = PriceEntry {
+                prices,
+                inventories,
+                cash: observed_cash,
+                infrastructure_level: observed_infra,
+                tick_updated: observed_tick,
+                last_seen_tick: observed_tick,
+            };
         }
-        let step = self.speed * dt;
-        self.last_step_distance = step.min(dist);
-        if step >= dist {
-            self.pos = self.target;
-            self.docked_at = self.target_island_id;
-            self.last_docked_island_id = self.docked_at;
-            self.docked_at
+
+        if home_island_id < count {
+            let (_, economy, _) = &islands[home_island_id];
+            self.ledger[home_island_id] = PriceEntry {
+                prices: economy.local_prices,
+                inventories: economy.inventory,
+                cash: economy.cash,
+                infrastructure_level: economy.infrastructure_level,
+                tick_updated: current_tick,
+                last_seen_tick: current_tick,
+            };
+        }
+    }
+
+    // ── Spawning daughters ─────────────────────────────────────────────
+
+    pub fn spawn_daughter(
+        &mut self,
+        mutation_strength: f32,
+        rng: &mut impl Rng,
+    ) -> Option<ShipState> {
+        let num_islands = self.ledger.len();
+        if num_islands == 0 {
+            return None;
+        }
+        let spawn_island_id = self
+            .docked_island()
+            .or(self.target_island_id)
+            .unwrap_or(0)
+            .min(num_islands - 1);
+
+        let speed_mutation = 1.0 + rng.gen_range(-mutation_strength..mutation_strength);
+        let daughter_base_speed =
+            (self.base_speed * speed_mutation).clamp(MIN_SHIP_SPEED, MAX_SHIP_SPEED);
+
+        let endowment = self.cash * 0.5;
+        self.cash -= endowment;
+
+        let mut daughter =
+            ShipState::new(self.pos, daughter_base_speed, num_islands, spawn_island_id);
+        daughter.cash = endowment;
+        daughter.ledger = self.ledger.clone();
+        daughter.route_memory = self.route_memory.clone();
+        if self.docked_island().is_none() {
+            if let Some(target_id) = self.target_island_id {
+                daughter.set_target(target_id.min(num_islands - 1), self.target);
+            }
+        }
+        daughter.archetype = if rng.gen::<f32>() < mutation_strength * 0.5 {
+            match rng.gen_range(0u8..3) {
+                0 => ShipArchetype::Clipper,
+                1 => ShipArchetype::Freighter,
+                _ => ShipArchetype::Shorthaul,
+            }
         } else {
-            self.pos += to_target.normalize() * step;
-            None
+            self.archetype
+        };
+        daughter.efficiency_rating = mutate_gene_gaussian(
+            self.efficiency_rating,
+            mutation_strength,
+            rng,
+            MIN_EFFICIENCY_RATING,
+            MAX_EFFICIENCY_RATING,
+        );
+        daughter.recompute_operational_traits();
+
+        daughter.strategy_genes = StrategyGenes {
+            confidence_decay_scale: mutate_gene_gaussian(
+                self.strategy_genes.confidence_decay_scale,
+                mutation_strength,
+                rng,
+                MIN_GENE_SCALE,
+                MAX_GENE_SCALE,
+            ),
+            risk_tolerance_scale: mutate_gene_gaussian(
+                self.strategy_genes.risk_tolerance_scale,
+                mutation_strength,
+                rng,
+                MIN_GENE_SCALE,
+                MAX_GENE_SCALE,
+            ),
+        };
+
+        Some(daughter)
+    }
+
+    // ── ECS conversion helpers ─────────────────────────────────────────
+
+    /// Convert this ShipState into ECS components.
+    pub fn into_components(self) -> (ShipMovement, ShipTrading, ShipProfile, ShipLedger) {
+        (
+            ShipMovement {
+                target: self.target,
+                speed: self.speed,
+                base_speed: self.base_speed,
+                target_island_id: self.target_island_id,
+                last_step_distance: self.last_step_distance,
+            },
+            ShipTrading {
+                docked_at: self.docked_at,
+                last_docked_island_id: self.last_docked_island_id,
+                cargo: self.cargo,
+                cash: self.cash,
+                labor_debt: self.labor_debt,
+                wear_debt: self.wear_debt,
+                purchase_price: self.purchase_price,
+                planned_target_after_load: self.planned_target_after_load,
+                cargo_changed_this_dock: self.cargo_changed_this_dock,
+                just_sold_resource: self.just_sold_resource,
+                last_dock_action: self.last_dock_action,
+                dock_idle_ticks: self.dock_idle_ticks,
+            },
+            ShipProfile {
+                archetype: self.archetype,
+                efficiency_rating: self.efficiency_rating,
+                max_cargo_volume: self.max_cargo_volume,
+                strategy_genes: self.strategy_genes,
+                home_island_id: self.home_island_id,
+            },
+            ShipLedger {
+                ledger: self.ledger,
+                route_memory: self.route_memory,
+            },
+        )
+    }
+
+    /// Reconstitute a ShipState from ECS components (borrows).
+    pub fn from_components(
+        pos: Vec2,
+        movement: &ShipMovement,
+        trading: &ShipTrading,
+        profile: &ShipProfile,
+        ship_ledger: &ShipLedger,
+    ) -> Self {
+        Self {
+            pos,
+            target: movement.target,
+            speed: movement.speed,
+            base_speed: movement.base_speed,
+            target_island_id: movement.target_island_id,
+            last_step_distance: movement.last_step_distance,
+            archetype: profile.archetype,
+            efficiency_rating: profile.efficiency_rating,
+            max_cargo_volume: profile.max_cargo_volume,
+            docked_at: trading.docked_at,
+            last_docked_island_id: trading.last_docked_island_id,
+            cargo: trading.cargo,
+            cash: trading.cash,
+            labor_debt: trading.labor_debt,
+            wear_debt: trading.wear_debt,
+            purchase_price: trading.purchase_price,
+            strategy_genes: profile.strategy_genes,
+            home_island_id: profile.home_island_id,
+            planned_target_after_load: trading.planned_target_after_load,
+            cargo_changed_this_dock: trading.cargo_changed_this_dock,
+            just_sold_resource: trading.just_sold_resource,
+            last_dock_action: trading.last_dock_action,
+            dock_idle_ticks: trading.dock_idle_ticks,
+            ledger: ship_ledger.ledger.clone(),
+            route_memory: ship_ledger.route_memory.clone(),
         }
+    }
+
+    /// Write back mutated state into ECS components (Mut refs from exclusive system).
+    pub fn write_back_to_components(
+        self,
+        movement: &mut Mut<ShipMovement>,
+        trading: &mut Mut<ShipTrading>,
+        profile: &mut Mut<ShipProfile>,
+        ship_ledger: &mut Mut<ShipLedger>,
+    ) {
+        movement.target = self.target;
+        movement.speed = self.speed;
+        movement.base_speed = self.base_speed;
+        movement.target_island_id = self.target_island_id;
+        movement.last_step_distance = self.last_step_distance;
+        trading.docked_at = self.docked_at;
+        trading.last_docked_island_id = self.last_docked_island_id;
+        trading.cargo = self.cargo;
+        trading.cash = self.cash;
+        trading.labor_debt = self.labor_debt;
+        trading.wear_debt = self.wear_debt;
+        trading.purchase_price = self.purchase_price;
+        trading.planned_target_after_load = self.planned_target_after_load;
+        trading.cargo_changed_this_dock = self.cargo_changed_this_dock;
+        trading.just_sold_resource = self.just_sold_resource;
+        trading.last_dock_action = self.last_dock_action;
+        trading.dock_idle_ticks = self.dock_idle_ticks;
+        profile.archetype = self.archetype;
+        profile.efficiency_rating = self.efficiency_rating;
+        profile.max_cargo_volume = self.max_cargo_volume;
+        profile.strategy_genes = self.strategy_genes;
+        profile.home_island_id = self.home_island_id;
+        ship_ledger.ledger = self.ledger;
+        ship_ledger.route_memory = self.route_memory;
     }
 }
 
@@ -1101,11 +1120,12 @@ fn mutate_gene_gaussian(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::island::IslandEconomy;
     use rand::{rngs::StdRng, SeedableRng};
 
     #[test]
     fn update_reaches_target_and_docks() {
-        let mut ship = Ship::new(Vec2::new(0.0, 0.0), 300.0, 3, 0);
+        let mut ship = ShipState::new(Vec2::new(0.0, 0.0), 300.0, 3, 0);
         ship.set_target(1, Vec2::new(10.0, 0.0));
 
         let docked = ship.update(1.0);
@@ -1117,7 +1137,7 @@ mod tests {
 
     #[test]
     fn effective_tuning_applies_gene_and_clamps() {
-        let mut ship = Ship::new(Vec2::new(0.0, 0.0), 300.0, 2, 0);
+        let mut ship = ShipState::new(Vec2::new(0.0, 0.0), 300.0, 2, 0);
         ship.strategy_genes.confidence_decay_scale = 0.01;
         let base = PlanningTuning {
             global_friction_mult: 10.0,
@@ -1134,7 +1154,7 @@ mod tests {
 
     #[test]
     fn bankruptcy_uses_service_debt_floor() {
-        let mut ship = Ship::new(Vec2::new(0.0, 0.0), 300.0, 2, 0);
+        let mut ship = ShipState::new(Vec2::new(0.0, 0.0), 300.0, 2, 0);
         ship.cash = -10.0;
         ship.labor_debt = 8.0;
         ship.wear_debt = 4.0;
@@ -1144,7 +1164,7 @@ mod tests {
 
     #[test]
     fn load_utility_floor_gets_more_permissive_with_idle_time() {
-        let mut ship = Ship::new(Vec2::new(0.0, 0.0), 300.0, 2, 0);
+        let mut ship = ShipState::new(Vec2::new(0.0, 0.0), 300.0, 2, 0);
         assert_eq!(ship.load_utility_floor(), 0.0);
         ship.dock_idle_ticks = 20;
         assert!(ship.load_utility_floor() < -0.25);
@@ -1155,18 +1175,18 @@ mod tests {
     #[test]
     fn trade_load_if_empty_uses_full_available_capacity() {
         let mut rng = StdRng::seed_from_u64(77);
-        let mut island = Island::new(0, Vec2::new(0.0, 0.0), 2, &mut rng);
+        let (mut island, _ledger) = IslandEconomy::new(0, 2, &mut rng);
         island.inventory = [500.0, 0.0, 0.0, 0.0, 0.0];
         island.local_prices = [10.0, 1000.0, 1000.0, 1000.0, 1000.0];
         island.cash = 10_000.0;
 
-        let mut ship = Ship::new(Vec2::new(0.0, 0.0), 300.0, 2, 0);
+        let mut ship = ShipState::new(Vec2::new(0.0, 0.0), 300.0, 2, 0);
         ship.cash = 10_000.0;
         ship.archetype = ShipArchetype::Clipper;
         ship.recompute_operational_traits();
         ship.max_cargo_volume = 60.0;
-        ship.ledger[1].prices[Resource::Grain.idx()] = 400.0;
-        ship.ledger[1].inventories[Resource::Grain.idx()] = 0.0;
+        ship.ledger[1].prices[Commodity::Grain.idx()] = 400.0;
+        ship.ledger[1].inventories[Commodity::Grain.idx()] = 0.0;
         ship.ledger[1].cash = 0.0;
         ship.ledger[1].tick_updated = 100;
         ship.ledger[1].last_seen_tick = 100;
@@ -1191,17 +1211,17 @@ mod tests {
     #[test]
     fn trade_load_if_empty_loads_least_worst_finite_lane() {
         let mut rng = StdRng::seed_from_u64(91);
-        let mut island = Island::new(0, Vec2::new(0.0, 0.0), 2, &mut rng);
+        let (mut island, _ledger) = IslandEconomy::new(0, 2, &mut rng);
         island.inventory = [300.0, 0.0, 0.0, 0.0, 0.0];
         island.local_prices = [100.0, 1000.0, 1000.0, 1000.0, 1000.0];
 
-        let mut ship = Ship::new(Vec2::new(0.0, 0.0), 300.0, 2, 0);
+        let mut ship = ShipState::new(Vec2::new(0.0, 0.0), 300.0, 2, 0);
         ship.cash = 10_000.0;
         ship.archetype = ShipArchetype::Clipper;
         ship.recompute_operational_traits();
         ship.max_cargo_volume = 20.0;
-        ship.ledger[1].prices[Resource::Grain.idx()] = 90.0;
-        ship.ledger[1].inventories[Resource::Grain.idx()] = 0.0;
+        ship.ledger[1].prices[Commodity::Grain.idx()] = 90.0;
+        ship.ledger[1].inventories[Commodity::Grain.idx()] = 0.0;
         ship.ledger[1].cash = 100_000.0;
         ship.ledger[1].tick_updated = 200;
         ship.ledger[1].last_seen_tick = 200;
@@ -1225,8 +1245,8 @@ mod tests {
 
     #[test]
     fn plan_next_island_uses_planned_target_for_loaded_ship() {
-        let mut ship = Ship::new(Vec2::new(0.0, 0.0), 300.0, 3, 0);
-        ship.cargo = Some((Resource::Grain, 5.0));
+        let mut ship = ShipState::new(Vec2::new(0.0, 0.0), 300.0, 3, 0);
+        ship.cargo = Some((Commodity::Grain, 5.0));
         ship.purchase_price = 100.0;
         ship.planned_target_after_load = Some(2);
         let positions = [

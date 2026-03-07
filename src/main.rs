@@ -1,64 +1,81 @@
-use macroquad::prelude::*;
+//! Archipelago — a trade simulation using Bevy ECS.
 
+mod components;
+mod input;
 mod island;
+mod rendering;
+mod resources;
 mod ship;
-mod world;
+mod simulation;
+mod ui;
 
+use bevy::prelude::*;
+
+use resources::*;
+use ship::spawn::STARTING_SIM_TICK;
 use ship::PlanningTuning;
-use world::{World, WORLD_SIZE};
 
-const TIME_SCALE_MIN: f32 = 0.25;
-const TIME_SCALE_MAX: f32 = 6.0;
-const TIME_SCALE_STEP: f32 = 0.25;
-const TIME_SCALE_DEFAULT: f32 = 1.0;
-
-fn handle_time_scale_input(time_scale: &mut f32) {
-    if is_key_pressed(KeyCode::Minus) {
-        *time_scale = (*time_scale - TIME_SCALE_STEP).clamp(TIME_SCALE_MIN, TIME_SCALE_MAX);
-    }
-    if is_key_pressed(KeyCode::Equal) {
-        *time_scale = (*time_scale + TIME_SCALE_STEP).clamp(TIME_SCALE_MIN, TIME_SCALE_MAX);
-    }
+fn main() {
+    App::new()
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "Archipelago".to_string(),
+                ..default()
+            }),
+            ..default()
+        }))
+        .insert_resource(ClearColor(Color::srgb(
+            10.0 / 255.0,
+            30.0 / 255.0,
+            60.0 / 255.0,
+        )))
+        .insert_resource(SimulationTick(STARTING_SIM_TICK))
+        .insert_resource(TimeScale(1.0))
+        .insert_resource(PlanningTuningRes(PlanningTuning {
+            global_friction_mult: 1.0,
+            info_decay_rate: 0.003,
+            market_spread: 0.10,
+        }))
+        .insert_resource(FrameTimingsRes::default())
+        .add_plugins(simulation::SimulationPlugin)
+        .add_plugins(rendering::RenderingPlugin)
+        .add_plugins(ui::UiPlugin)
+        .add_plugins(input::InputPlugin)
+        .add_systems(Startup, setup_world)
+        .run();
 }
 
-#[macroquad::main("Archipelago")]
-async fn main() {
-    // Number of islands and ships in the simulation.
-    const NUM_ISLANDS: usize = 50;
-    const NUM_SHIPS: usize = 100;
+fn setup_world(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
+    let mut rng = ::rand::thread_rng();
 
-    // Overall tuning parameters for ship planning.
-    const GLOBAL_FRICTION_MULT: f32 = 1.0;
-    const INFO_DECAY_RATE: f32 = 0.003;
-    const MARKET_SPREAD: f32 = 0.10;
+    // Pre-create shared meshes.
+    let clipper_mesh = meshes.add(RegularPolygon::new(8.0, 3));
+    let freighter_mesh = meshes.add(Rectangle::new(15.0, 5.0));
+    let shorthaul_mesh = meshes.add(Circle::new(5.0));
 
-    let planning_tuning = PlanningTuning {
-        global_friction_mult: GLOBAL_FRICTION_MULT,
-        info_decay_rate: INFO_DECAY_RATE,
-        market_spread: MARKET_SPREAD,
-    };
+    // Spawn islands (each gets a unique mesh and color).
+    let island_seed_data =
+        island::spawn::spawn_islands(&mut commands, &mut meshes, &mut materials, &mut rng);
 
-    let mut world = World::new(NUM_ISLANDS, NUM_SHIPS);
-    world.set_planning_tuning(planning_tuning);
-    let mut time_scale = TIME_SCALE_DEFAULT;
+    // Store ship mesh handles for runtime spawning (fleet evolution).
+    commands.insert_resource(ShipMeshes {
+        clipper: clipper_mesh.clone(),
+        freighter: freighter_mesh.clone(),
+        shorthaul: shorthaul_mesh.clone(),
+    });
 
-    loop {
-        world.handle_input();
-        handle_time_scale_input(&mut time_scale);
-
-        // Camera maps simulation space (WORLD_SIZE x WORLD_SIZE) to the screen,
-        // with inverted world Y so world-space icons render upright.
-        let camera =
-            Camera2D::from_display_rect(Rect::new(0.0, WORLD_SIZE, WORLD_SIZE, -WORLD_SIZE));
-        set_camera(&camera);
-
-        world.update(get_frame_time() * time_scale);
-
-        clear_background(Color::from_rgba(10, 30, 60, 255));
-        world.draw();
-
-        set_default_camera();
-        world.draw_ui();
-        next_frame().await;
-    }
+    // Spawn ships (each gets its own material for per-ship cargo coloring).
+    ship::spawn::spawn_ships(
+        &mut commands,
+        &mut materials,
+        &mut rng,
+        &island_seed_data,
+        clipper_mesh,
+        freighter_mesh,
+        shorthaul_mesh,
+    );
 }
