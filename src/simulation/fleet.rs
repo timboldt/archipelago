@@ -11,8 +11,8 @@ use crate::resources::{PlanningTuningRes, ShipMeshes, SimulationTick};
 use crate::ship::{ShipState, STARTING_CASH};
 
 const SCUTTLE_THRESHOLD_MULTIPLIER: f32 = 0.35;
-const BIRTH_THRESHOLD_MULTIPLIER: f32 = 5.0;
-const BIRTH_FEE_MULTIPLIER: f32 = 1.5;
+const BIRTH_THRESHOLD_MULTIPLIER: f32 = 2.5;
+const BIRTH_FEE_MULTIPLIER: f32 = 1.0;
 const TARGET_SHIPS_PER_ISLAND: f32 = 12.0;
 const LIFECYCLE_CHECK_INTERVAL_TICKS: u64 = 30;
 const MUTATION_STRENGTH: f32 = 0.05;

@@ -18,13 +18,13 @@ use crate::components::{
 use crate::island::IslandEconomy;
 
 const TRADE_ACTION_VOLUME: f32 = 18.0;
-pub const STARTING_CASH: f32 = 200.0;
+pub const STARTING_CASH: f32 = 400.0;
 const DEFAULT_MARKET_SPREAD: f32 = 0.10;
 const ROUTE_LEARNING_RATE: f32 = 0.20;
 const ROUTE_LEARNING_DECAY: f32 = 0.98;
 const BASE_CARGO_VOLUME_CAPACITY: f32 = 22.0;
-const BASE_LABOR_RATE: f32 = 0.0004;
-const BASE_WEAR_RATE: f32 = 0.00012;
+const BASE_LABOR_RATE: f32 = 0.0002;
+const BASE_WEAR_RATE: f32 = 0.00006;
 #[allow(dead_code)]
 const DOCK_IDLE_RISK_RAMP_PER_TICK: f32 = 0.015;
 #[allow(dead_code)]
@@ -68,8 +68,8 @@ const BASE_DOCKING_TAX_RATE: f32 = 0.0015;
 const MAX_DOCKING_TAX_RATE: f32 = 0.02;
 const LIQUIDITY_IMBALANCE_TAX_SLOPE: f32 = 0.01;
 const DOCKING_TAX_CASH_RESERVE_MULTIPLIER: f32 = 0.75;
-const IDLE_PORT_FEE_PER_TICK: f32 = STARTING_CASH * 0.006;
-const IDLE_FEE_GRACE_TICKS: u32 = 100;
+const IDLE_PORT_FEE_PER_TICK: f32 = STARTING_CASH * 0.002;
+const IDLE_FEE_GRACE_TICKS: u32 = 300;
 const MIN_EFFICIENCY_RATING: f32 = 0.80;
 const MAX_EFFICIENCY_RATING: f32 = 1.30;
 const MIN_GENE_SCALE: f32 = 0.80;
@@ -181,9 +181,10 @@ impl ShipState {
 
     pub fn profile_multipliers_static(archetype: ShipArchetype) -> (f32, f32, f32, f32) {
         match archetype {
-            ShipArchetype::Clipper => (1.50, 0.75, 1.50, 1.35),
-            ShipArchetype::Shorthaul => (1.00, 1.00, 0.75, 0.80),
-            ShipArchetype::Freighter => (0.75, 2.00, 1.00, 1.10),
+            // (speed_mult, capacity_mult, labor_mult, wear_mult)
+            ShipArchetype::Clipper => (1.50, 0.50, 1.50, 1.50),
+            ShipArchetype::Shorthaul => (1.00, 1.00, 0.50, 0.80),
+            ShipArchetype::Freighter => (0.75, 2.00, 0.75, 1.00),
         }
     }
 
