@@ -7,7 +7,7 @@ use crate::components::{
     ShipProfile, ShipTrading,
 };
 use crate::island::IslandEconomy;
-use crate::resources::{PlanningTuningRes, ShipMeshes, SimulationTick};
+use crate::resources::{IslandPositions, PlanningTuningRes, ShipMeshes, SimulationTick};
 use crate::ship::{ShipState, STARTING_CASH, TARGET_SHIPS_PER_ISLAND};
 
 const SCUTTLE_THRESHOLD_MULTIPLIER: f32 = 0.35;
@@ -15,6 +15,8 @@ const BIRTH_THRESHOLD_MULTIPLIER: f32 = 2.5;
 const BIRTH_FEE_MULTIPLIER: f32 = 1.0;
 const LIFECYCLE_CHECK_INTERVAL_TICKS: u64 = 30;
 const MUTATION_STRENGTH: f32 = 0.05;
+const ISLAND_SPAWN_DROUGHT_TICKS: u64 = 600;
+const ISLAND_SPAWN_SHIP_COST: f32 = 300.0;
 
 pub fn evolve_fleet(world: &mut World) {
     let tick = world.resource::<SimulationTick>().0;
@@ -148,6 +150,53 @@ pub fn evolve_fleet(world: &mut World) {
             Mesh2d(mesh),
             MeshMaterial2d(material),
             Transform::from_translation(daughter_pos.extend(1.0)),
+        ));
+    }
+
+    // Spawn ships at isolated islands that haven't seen trade in a long time.
+    let island_positions = world.resource::<IslandPositions>().0.clone();
+    let mut isolated_spawns: Vec<(Entity, usize, Vec2)> = Vec::new();
+    {
+        let mut query =
+            world.query_filtered::<(Entity, &IslandId, &IslandEconomy), With<IslandMarker>>();
+        for (entity, id, economy) in query.iter(world) {
+            let drought = tick.saturating_sub(economy.last_trade_tick);
+            if drought >= ISLAND_SPAWN_DROUGHT_TICKS
+                && economy.cash >= ISLAND_SPAWN_SHIP_COST * 2.0
+                && id.0 < island_positions.len()
+            {
+                isolated_spawns.push((entity, id.0, island_positions[id.0]));
+            }
+        }
+    }
+
+    for &(entity, _, _) in &isolated_spawns {
+        let mut economy = world.get_mut::<IslandEconomy>(entity).unwrap();
+        economy.cash -= ISLAND_SPAWN_SHIP_COST;
+        economy.last_trade_tick = tick;
+    }
+
+    for (_, island_id, pos) in isolated_spawns {
+        let ship = ShipState::new(pos, 350.0, num_islands, island_id);
+        let (movement, trading, profile, ship_ledger) = ship.into_components();
+        let mesh = match profile.archetype {
+            ShipArchetype::Clipper => clipper_mesh.clone(),
+            ShipArchetype::Freighter => freighter_mesh.clone(),
+            ShipArchetype::Shorthaul => shorthaul_mesh.clone(),
+        };
+        let material = world
+            .resource_mut::<Assets<ColorMaterial>>()
+            .add(Color::srgb(0.9, 0.9, 0.9));
+        world.spawn((
+            ShipMarker,
+            Position(pos),
+            movement,
+            trading,
+            profile,
+            ship_ledger,
+            Mesh2d(mesh),
+            MeshMaterial2d(material),
+            Transform::from_translation(pos.extend(1.0)),
         ));
     }
 }

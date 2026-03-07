@@ -110,6 +110,7 @@ pub fn process_docked_ships(world: &mut World) {
         let island_ledger = &mut island_ledger_component.0;
 
         island_economy.mark_seen(tick, island_ledger);
+        island_economy.last_trade_tick = tick;
 
         // Extract ship states.
         let mut ships: Vec<(Entity, ShipState)> = Vec::with_capacity(ship_entity_list.len());

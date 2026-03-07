@@ -60,6 +60,7 @@ const GRAIN_LABOR_FLOOR: f32 = 0.15;
 const TOOL_CHAIN_SCALE: f32 = 4.0;
 const IRON_FOR_TOOLS_WEIGHT: f32 = 0.6;
 const TIMBER_FOR_TOOLS_WEIGHT: f32 = 0.4;
+const DEMAND_DESTRUCTION_REFERENCE: f32 = 20.0;
 const SPICE_PRODUCTIVITY_SCALE: f32 = 0.12;
 const SPICE_PRODUCTIVITY_CAP: f32 = 1.20;
 const PER_CAPITA_INFRA_CREDIT_GENERATION: f32 = 0.05;
@@ -86,6 +87,7 @@ pub struct IslandEconomy {
     pub local_prices: [f32; COMMODITY_COUNT],
     pub labor_allocation: [f32; COMMODITY_COUNT],
     pub spice_morale_bonus: f32,
+    pub last_trade_tick: u64,
 }
 
 impl IslandEconomy {
@@ -192,6 +194,7 @@ impl IslandEconomy {
             local_prices: [0.0; COMMODITY_COUNT],
             labor_allocation: Self::initial_labor_allocation(&production_rates),
             spice_morale_bonus: 1.0,
+            last_trade_tick: 0,
         };
 
         let mut ledger = vec![
@@ -403,7 +406,9 @@ impl IslandEconomy {
                 self.inventory[index] = self.inventory[index].min(capacity);
             }
 
-            let demand = self.consumption_rates[index] * self.population * dt;
+            let availability =
+                self.inventory[index] / (self.inventory[index] + DEMAND_DESTRUCTION_REFERENCE);
+            let demand = self.consumption_rates[index] * self.population * dt * availability;
             let effective_demand = if resource == Commodity::Tools {
                 demand * TOOLS_CONSUMPTION_SCALE
             } else {
@@ -577,6 +582,7 @@ impl IslandEconomy {
             local_prices: source.local_prices,
             labor_allocation: source.labor_allocation,
             spice_morale_bonus: source.spice_morale_bonus,
+            last_trade_tick: source.last_trade_tick,
         }
     }
 }
