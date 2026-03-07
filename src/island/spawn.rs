@@ -3,7 +3,7 @@
 use bevy::prelude::*;
 use rand::Rng;
 
-use crate::components::{IslandId, IslandMarker, MarketLedger, Position};
+use crate::components::{IslandId, IslandMarker, MarketLedger, Position, PriceLedger};
 use crate::island::IslandEconomy;
 use crate::resources::{IslandEntityMap, IslandPositions, RouteHistory};
 
@@ -19,9 +19,9 @@ pub const ROUTE_HISTORY_WINDOW_TICKS: usize = 10;
 
 /// Generate island positions along a Caribbean-style arc with scatter.
 ///
-/// The arc sweeps from the upper-left to the lower-right of the world,
-/// curving like the Lesser Antilles chain. Islands are placed along the
-/// arc with random perpendicular scatter and a minimum-distance check.
+/// The arc sweeps a randomised portion of an ellipse. Islands are placed
+/// along the arc with uniform perpendicular scatter and a minimum-distance
+/// check.
 pub fn generate_arc_positions(rng: &mut impl Rng) -> Vec<Vec2> {
     let center = Vec2::new(WORLD_SIZE * 0.5, WORLD_SIZE * 0.5);
     // Ellipse radii: one axis is fixed, the other varies for eccentricity.
@@ -82,17 +82,31 @@ pub fn generate_arc_positions(rng: &mut impl Rng) -> Vec<Vec2> {
     positions
 }
 
-#[allow(dead_code)]
-pub fn spawn_islands(commands: &mut Commands) {
-    let mut rng = ::rand::thread_rng();
-
-    let island_positions = generate_arc_positions(&mut rng);
+/// Spawn island entities and insert shared resources.
+///
+/// Returns seed data `(position, economy_clone, ledger_clone)` per island,
+/// needed by ship spawning to seed initial market views.
+pub fn spawn_islands(
+    commands: &mut Commands,
+    rng: &mut impl Rng,
+    island_mesh: Handle<Mesh>,
+    island_material: Handle<ColorMaterial>,
+) -> Vec<(Vec2, IslandEconomy, PriceLedger)> {
+    let island_positions = generate_arc_positions(rng);
 
     let mut entity_map = Vec::with_capacity(NUM_ISLANDS);
     let mut cached_positions = Vec::with_capacity(NUM_ISLANDS);
+    let mut island_seed_data: Vec<(Vec2, IslandEconomy, PriceLedger)> = Vec::new();
 
     for (id, pos) in island_positions.iter().enumerate() {
-        let (economy, ledger) = IslandEconomy::new(id, NUM_ISLANDS, &mut rng);
+        let (economy, ledger) = IslandEconomy::new(id, NUM_ISLANDS, rng);
+
+        island_seed_data.push((
+            *pos,
+            IslandEconomy::clone_for_seeding(&economy),
+            ledger.clone(),
+        ));
+
         let entity = commands
             .spawn((
                 IslandMarker,
@@ -100,6 +114,8 @@ pub fn spawn_islands(commands: &mut Commands) {
                 economy,
                 MarketLedger(ledger),
                 Position(*pos),
+                Mesh2d(island_mesh.clone()),
+                MeshMaterial2d(island_material.clone()),
                 Transform::from_translation(pos.extend(0.0)),
             ))
             .id();
@@ -117,4 +133,6 @@ pub fn spawn_islands(commands: &mut Commands) {
         ],
         cursor: 0,
     });
+
+    island_seed_data
 }
