@@ -7,6 +7,9 @@ pub mod friction;
 pub mod movement;
 pub mod route_history;
 
+#[cfg(test)]
+mod integration_tests;
+
 use bevy::prelude::*;
 
 /// System sets for simulation phase ordering.

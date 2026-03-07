@@ -128,7 +128,7 @@ const INFRASTRUCTURE_INVESTMENT_EFFICIENCY: f32 = 0.00032;
 const MAX_INFRASTRUCTURE_LEVEL: f32 = 3.5;
 
 /// Core island economy state and market operations — used as a Bevy Component.
-#[derive(Component)]
+#[derive(Component, Clone)]
 pub struct IslandEconomy {
     pub id: usize,
     pub inventory: Inventory,

@@ -233,14 +233,30 @@ pub fn process_docked_ships(world: &mut World) {
         };
 
         // Take island economy and ledger out of the ECS temporarily.
-        let mut island_economy = world
-            .entity_mut(island_entity)
-            .take::<IslandEconomy>()
-            .unwrap();
-        let mut island_ledger_component = world
-            .entity_mut(island_entity)
-            .take::<MarketLedger>()
-            .unwrap();
+        let Some(mut island_entity_mut) = world.get_entity_mut(island_entity).ok() else {
+            warn!(
+                "Island entity {:?} not found during docking pass",
+                island_entity
+            );
+            continue;
+        };
+
+        let Some(mut island_economy) = island_entity_mut.take::<IslandEconomy>() else {
+            warn!(
+                "Island entity {:?} missing IslandEconomy during docking pass",
+                island_entity
+            );
+            continue;
+        };
+        let Some(mut island_ledger_component) = island_entity_mut.take::<MarketLedger>() else {
+            warn!(
+                "Island entity {:?} missing MarketLedger during docking pass",
+                island_entity
+            );
+            // Re-insert economy before continuing
+            world.entity_mut(island_entity).insert(island_economy);
+            continue;
+        };
         let island_ledger = &mut island_ledger_component.0;
 
         island_economy.mark_seen(tick, island_ledger);
@@ -249,14 +265,30 @@ pub fn process_docked_ships(world: &mut World) {
         // Extract ship states from ECS components.
         let mut ships: Vec<(Entity, ShipState)> = Vec::with_capacity(ship_entity_list.len());
         for &ship_entity in ship_entity_list {
-            let entity_ref = world.entity(ship_entity);
-            let pos = entity_ref.get::<Position>().unwrap().0;
-            let movement = entity_ref.get::<ShipMovement>().unwrap();
-            let trading = entity_ref.get::<ShipTrading>().unwrap();
-            let profile = entity_ref.get::<ShipProfile>().unwrap();
-            let ship_ledger_comp = entity_ref.get::<ShipLedger>().unwrap();
+            let Some(entity_ref) = world.get_entity(ship_entity).ok() else {
+                warn!(
+                    "Ship entity {:?} not found during docking extraction",
+                    ship_entity
+                );
+                continue;
+            };
+
+            let (Some(pos), Some(movement), Some(trading), Some(profile), Some(ship_ledger_comp)) = (
+                entity_ref.get::<Position>(),
+                entity_ref.get::<ShipMovement>(),
+                entity_ref.get::<ShipTrading>(),
+                entity_ref.get::<ShipProfile>(),
+                entity_ref.get::<ShipLedger>(),
+            ) else {
+                warn!(
+                    "Ship entity {:?} missing required components during docking extraction",
+                    ship_entity
+                );
+                continue;
+            };
+
             let ship =
-                ShipState::from_components(pos, movement, trading, profile, ship_ledger_comp);
+                ShipState::from_components(pos.0, movement, trading, profile, ship_ledger_comp);
             ships.push((ship_entity, ship));
         }
 
@@ -319,19 +351,39 @@ pub fn process_docked_ships(world: &mut World) {
             }
         }
 
-        // Write back ship states — one component at a time to avoid borrow conflicts.
+        // Write back ship states.
         for (entity, ship) in ships {
             if bankrupt_entities.contains(&entity) {
                 continue;
             }
             let new_pos = ship.pos();
             let (movement, trading, profile, ship_ledger_comp) = ship.into_components();
-            *world.get_mut::<Position>(entity).unwrap() = Position(new_pos);
-            *world.get_mut::<ShipMovement>(entity).unwrap() = movement;
-            *world.get_mut::<ShipTrading>(entity).unwrap() = trading;
-            *world.get_mut::<ShipProfile>(entity).unwrap() = profile;
-            *world.get_mut::<ShipLedger>(entity).unwrap() = ship_ledger_comp;
-            world.get_mut::<Transform>(entity).unwrap().translation = new_pos.extend(1.0);
+
+            if let Ok(mut entity_mut) = world.get_entity_mut(entity) {
+                if let Some(mut comp) = entity_mut.get_mut::<Position>() {
+                    *comp = Position(new_pos);
+                }
+                if let Some(mut comp) = entity_mut.get_mut::<ShipMovement>() {
+                    *comp = movement;
+                }
+                if let Some(mut comp) = entity_mut.get_mut::<ShipTrading>() {
+                    *comp = trading;
+                }
+                if let Some(mut comp) = entity_mut.get_mut::<ShipProfile>() {
+                    *comp = profile;
+                }
+                if let Some(mut comp) = entity_mut.get_mut::<ShipLedger>() {
+                    *comp = ship_ledger_comp;
+                }
+                if let Some(mut comp) = entity_mut.get_mut::<Transform>() {
+                    comp.translation = new_pos.extend(1.0);
+                }
+            } else {
+                warn!(
+                    "Ship entity {:?} not found during docking write-back",
+                    entity
+                );
+            }
         }
     }
 

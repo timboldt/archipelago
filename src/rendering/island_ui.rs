@@ -72,22 +72,25 @@ pub fn update_island_visuals(
         Some(HeatmapMode::CashPerCapita | HeatmapMode::Population | HeatmapMode::Infrastructure)
     );
 
-    let (min_val, max_val) = if needs_normalize {
-        let mode = overlay.0.unwrap();
-        let mut lo = f32::INFINITY;
-        let mut hi = f32::NEG_INFINITY;
-        for (_, _, _, eco, _, is_mainland) in query.iter() {
-            if is_mainland {
-                continue;
+    let (min_val, max_val) = if let Some(mode) = overlay.0 {
+        if needs_normalize {
+            let mut lo = f32::INFINITY;
+            let mut hi = f32::NEG_INFINITY;
+            for (_, _, _, eco, _, is_mainland) in query.iter() {
+                if is_mainland {
+                    continue;
+                }
+                let v = heatmap_value(eco, mode);
+                lo = lo.min(v);
+                hi = hi.max(v);
             }
-            let v = heatmap_value(eco, mode);
-            lo = lo.min(v);
-            hi = hi.max(v);
-        }
-        if lo >= hi {
-            (0.0, 1.0)
+            if lo >= hi {
+                (0.0, 1.0)
+            } else {
+                (lo, hi)
+            }
         } else {
-            (lo, hi)
+            (0.0, 1.0)
         }
     } else {
         (0.0, 1.0)

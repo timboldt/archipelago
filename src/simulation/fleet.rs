@@ -62,14 +62,26 @@ fn evaluate_lifecycle(
     let mut island_scuttle_settlements: Vec<(usize, f32)> = Vec::new();
 
     for entity in ship_entities {
-        let entity_ref = world.entity(*entity);
-        let pos = entity_ref.get::<Position>().unwrap().0;
-        let movement = entity_ref.get::<ShipMovement>().unwrap();
-        let trading = entity_ref.get::<ShipTrading>().unwrap();
-        let profile = entity_ref.get::<ShipProfile>().unwrap();
-        let ship_ledger = entity_ref.get::<ShipLedger>().unwrap();
+        let Some(entity_ref) = world.get_entity(*entity).ok() else {
+            warn!(
+                "Ship entity {:?} not found during lifecycle evaluation",
+                entity
+            );
+            continue;
+        };
 
-        let mut ship = ShipState::from_components(pos, movement, trading, profile, ship_ledger);
+        let (Some(pos), Some(movement), Some(trading), Some(profile), Some(ship_ledger)) = (
+            entity_ref.get::<Position>(),
+            entity_ref.get::<ShipMovement>(),
+            entity_ref.get::<ShipTrading>(),
+            entity_ref.get::<ShipProfile>(),
+            entity_ref.get::<ShipLedger>(),
+        ) else {
+            warn!("Ship entity {:?} missing required components", entity);
+            continue;
+        };
+
+        let mut ship = ShipState::from_components(pos.0, movement, trading, profile, ship_ledger);
 
         if ship.estimated_net_worth() < scuttle_threshold {
             if let Some(island_id) = ship.last_docked_island() {
@@ -87,8 +99,9 @@ fn evaluate_lifecycle(
                 }
                 daughters.push(daughter);
 
-                let mut entity_ref = world.entity_mut(*entity);
-                entity_ref.get_mut::<ShipTrading>().unwrap().cash = ship.current_cash();
+                if let Some(mut trading_mut) = world.get_mut::<ShipTrading>(*entity) {
+                    trading_mut.cash = ship.current_cash();
+                }
             }
         }
     }
@@ -173,9 +186,15 @@ fn spawn_new_ships(world: &mut World, daughters: Vec<ShipState>, num_islands: us
     }
 
     for &(entity, _, _) in &isolated_spawns {
-        let mut economy = world.get_mut::<IslandEconomy>(entity).unwrap();
-        economy.cash -= ISLAND_SPAWN_SHIP_COST;
-        economy.last_trade_tick = tick;
+        if let Some(mut economy) = world.get_mut::<IslandEconomy>(entity) {
+            economy.cash -= ISLAND_SPAWN_SHIP_COST;
+            economy.last_trade_tick = tick;
+        } else {
+            warn!(
+                "Island entity {:?} missing IslandEconomy during isolated restocking spawn",
+                entity
+            );
+        }
     }
 
     for (_, island_id, pos) in isolated_spawns {

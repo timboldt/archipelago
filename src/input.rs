@@ -246,9 +246,7 @@ fn handle_click_selection(
     let mut closest_ship: Option<(Entity, f32)> = None;
     for (entity, pos) in ships.iter() {
         let dist = world_pos.distance(pos.0);
-        if dist < SHIP_CLICK_RADIUS * wpp
-            && (closest_ship.is_none() || dist < closest_ship.unwrap().1)
-        {
+        if dist < SHIP_CLICK_RADIUS * wpp && closest_ship.is_none_or(|(_, d)| dist < d) {
             closest_ship = Some((entity, dist));
         }
     }
@@ -268,9 +266,7 @@ fn handle_click_selection(
     let mut closest_island: Option<(Entity, f32)> = None;
     for (entity, pos) in islands.iter() {
         let dist = world_pos.distance(pos.0);
-        if dist < ISLAND_CLICK_RADIUS * wpp
-            && (closest_island.is_none() || dist < closest_island.unwrap().1)
-        {
+        if dist < ISLAND_CLICK_RADIUS * wpp && closest_island.is_none_or(|(_, d)| dist < d) {
             closest_island = Some((entity, dist));
         }
     }

@@ -133,7 +133,7 @@ pub enum DockAction {
 }
 
 /// Ship movement state.
-#[derive(Component)]
+#[derive(Component, Clone)]
 pub struct ShipMovement {
     pub target: Vec2,
     pub speed: f32,
@@ -143,7 +143,7 @@ pub struct ShipMovement {
 }
 
 /// Ship trading state.
-#[derive(Component)]
+#[derive(Component, Clone)]
 pub struct ShipTrading {
     pub docked_at: Option<usize>,
     pub last_docked_island_id: Option<usize>,
@@ -160,7 +160,7 @@ pub struct ShipTrading {
 }
 
 /// Ship profile (archetype and genetic traits).
-#[derive(Component)]
+#[derive(Component, Clone)]
 pub struct ShipProfile {
     pub archetype: ShipArchetype,
     pub efficiency_rating: f32,
