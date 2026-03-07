@@ -5,9 +5,7 @@ use std::time::Instant;
 
 use crate::components::{ShipMarker, ShipMovement, ShipProfile, ShipTrading};
 use crate::resources::{FrameTimingsRes, PlanningTuningRes, TimeScale};
-use crate::ship::ShipState;
-
-const TARGET_SHIPS_PER_ISLAND: f32 = 12.0;
+use crate::ship::{ShipState, TARGET_SHIPS_PER_ISLAND};
 
 pub fn apply_maritime_friction(
     mut query: Query<(&mut ShipMovement, &mut ShipTrading, &ShipProfile), With<ShipMarker>>,
@@ -24,7 +22,7 @@ pub fn apply_maritime_friction(
     let num_islands = island_count.iter().count().max(1) as f32;
     let num_ships = ship_count.iter().count() as f32;
     let target_population = (num_islands * TARGET_SHIPS_PER_ISLAND).max(1.0);
-    let crowding_factor = (num_ships / target_population).max(0.35);
+    let crowding_factor = (num_ships / target_population).max(0.10);
     let global_friction_mult = planning_tuning.0.global_friction_mult * crowding_factor;
 
     query
@@ -34,8 +32,7 @@ pub fn apply_maritime_friction(
             let (_, _, labor_mult, _) = ShipState::profile_multipliers_static(profile.archetype);
             let efficiency_factor_labor =
                 (1.20 - 0.35 * profile.efficiency_rating).clamp(0.70, 1.15);
-            let labor_rate =
-                crate::ship::BASE_LABOR_RATE_PUB * labor_mult * efficiency_factor_labor;
+            let labor_rate = crate::ship::BASE_LABOR_RATE * labor_mult * efficiency_factor_labor;
 
             let mut labor = labor_rate * dt.max(0.0) * global_friction_mult;
             if trading.docked_at.is_some() {
@@ -46,7 +43,7 @@ pub fn apply_maritime_friction(
             let (_, _, _, wear_mult) = ShipState::profile_multipliers_static(profile.archetype);
             let efficiency_factor_wear =
                 (1.20 - 0.40 * profile.efficiency_rating).clamp(0.65, 1.15);
-            let wear_rate = crate::ship::BASE_WEAR_RATE_PUB * wear_mult * efficiency_factor_wear;
+            let wear_rate = crate::ship::BASE_WEAR_RATE * wear_mult * efficiency_factor_wear;
 
             let cargo_load_ratio = if let Some((resource, amount)) = trading.cargo {
                 (amount.max(0.0) * resource.volume_per_unit() / profile.max_cargo_volume.max(0.01))

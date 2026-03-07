@@ -5,8 +5,7 @@ use bevy::prelude::*;
 use crate::components::{IslandMarker, ShipArchetype, ShipMarker, ShipProfile, COMMODITY_COUNT};
 use crate::island::IslandEconomy;
 use crate::resources::{FrameTimingsRes, PlanningTuningRes, PERF_HUD_UPDATE_INTERVAL_SECS};
-
-const TARGET_SHIPS_PER_ISLAND: f32 = 12.0;
+use crate::ship::TARGET_SHIPS_PER_ISLAND;
 
 #[derive(Component)]
 pub struct HudText;
@@ -78,7 +77,7 @@ pub fn update_hud(
 
     let target_pop = (island_count.max(1) as f32 * TARGET_SHIPS_PER_ISLAND).max(1.0);
     let friction_mult =
-        planning_tuning.0.global_friction_mult * (ship_count as f32 / target_pop).max(0.35);
+        planning_tuning.0.global_friction_mult * (ship_count as f32 / target_pop).max(0.10);
 
     // Update perf timings.
     frame_timings.samples = frame_timings.samples.saturating_add(1);

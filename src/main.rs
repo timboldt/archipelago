@@ -53,9 +53,9 @@ fn setup_world(
     let mut rng = ::rand::thread_rng();
 
     // Pre-create shared meshes.
-    let clipper_mesh = meshes.add(RegularPolygon::new(6.0, 3));
-    let freighter_mesh = meshes.add(Rectangle::new(10.0, 6.0));
-    let shorthaul_mesh = meshes.add(Circle::new(4.0));
+    let clipper_mesh = meshes.add(RegularPolygon::new(8.0, 3));
+    let freighter_mesh = meshes.add(Rectangle::new(15.0, 5.0));
+    let shorthaul_mesh = meshes.add(Circle::new(5.0));
 
     // Spawn islands (each gets a unique mesh and color).
     let island_seed_data =

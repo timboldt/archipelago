@@ -41,10 +41,10 @@ const TOOLS_CONSUMPTION_SCALE: f32 = 0.04;
 const INDUSTRIAL_LABOR_SCALING: f32 = 0.012;
 const SCARCITY_LOG_SCALE: f32 = 2.4;
 const SCARCITY_REFERENCE: f32 = 120.0;
-const SPECIALIZATION_ZERO_PROBABILITY: f32 = 0.20;
-const SPICE_SPECIALIZATION_ZERO_PROBABILITY: f32 = 0.65;
-const FOCUS_PRODUCTION_BOOST: f32 = 1.9;
-const NON_FOCUS_PRODUCTION_SCALE: f32 = 0.78;
+const SPECIALIZATION_ZERO_PROBABILITY: f32 = 0.40;
+const SPICE_SPECIALIZATION_ZERO_PROBABILITY: f32 = 0.75;
+const FOCUS_PRODUCTION_BOOST: f32 = 2.8;
+const NON_FOCUS_PRODUCTION_SCALE: f32 = 0.45;
 const TOOLS_PRODUCTIVITY_CAP: f32 = 2.0;
 const TOOLS_PRODUCTIVITY_SCALE: f32 = 0.22;
 
@@ -169,7 +169,9 @@ impl IslandEconomy {
             let index = resource.idx();
             if resource == focus_resource {
                 production_rates[index] *= FOCUS_PRODUCTION_BOOST;
-            } else {
+            } else if resource != Commodity::Grain {
+                // Grain is exempt from non-focus penalty — all islands
+                // need baseline food production to sustain their population.
                 production_rates[index] *= NON_FOCUS_PRODUCTION_SCALE;
             }
         }

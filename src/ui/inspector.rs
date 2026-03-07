@@ -3,8 +3,7 @@
 use bevy::prelude::*;
 
 use crate::components::{
-    Commodity, IslandMarker, SelectedIsland, SelectedShip, ShipArchetype, ShipMovement,
-    ShipProfile, ShipTrading,
+    Commodity, SelectedIsland, SelectedShip, ShipArchetype, ShipMovement, ShipProfile, ShipTrading,
 };
 use crate::island::IslandEconomy;
 
@@ -81,10 +80,10 @@ pub fn update_ship_inspector(
         crate::ship::ShipState::profile_multipliers_static(profile.archetype);
     let (_, _, _, wear_mult) =
         crate::ship::ShipState::profile_multipliers_static(profile.archetype);
-    let labor_rate = crate::ship::BASE_LABOR_RATE_PUB
+    let labor_rate = crate::ship::BASE_LABOR_RATE
         * labor_mult
         * (1.20 - 0.35 * profile.efficiency_rating).clamp(0.70, 1.15);
-    let wear_rate = crate::ship::BASE_WEAR_RATE_PUB
+    let wear_rate = crate::ship::BASE_WEAR_RATE
         * wear_mult
         * (1.20 - 0.40 * profile.efficiency_rating).clamp(0.65, 1.15);
 
@@ -101,7 +100,16 @@ pub fn update_ship_inspector(
         "  Labor/Wear: {:.4}/{:.4}\n",
         labor_rate, wear_rate
     ));
+    let cargo_value = if let Some((_, amount)) = trading.cargo {
+        (trading.purchase_price.max(0.0) * amount.max(0.0)).max(0.0)
+    } else {
+        0.0
+    };
+    let debt = trading.labor_debt.max(0.0) + trading.wear_debt.max(0.0);
+    let wealth = trading.cash + cargo_value - debt;
+
     s.push_str(&format!("  Cash: {:.1}\n", trading.cash));
+    s.push_str(&format!("  Wealth: {:.1}\n", wealth));
     s.push_str(&format!("  {}\n", cargo_text));
     s.push_str("  [ / ]: Prev / Next ship\n");
 
@@ -112,7 +120,6 @@ pub fn update_island_inspector(
     mut commands: Commands,
     mut inspector_q: Query<(Entity, &mut Text, &mut Node), With<IslandInspectorText>>,
     selected_island: Query<&IslandEconomy, With<SelectedIsland>>,
-    island_count: Query<(), With<IslandMarker>>,
 ) {
     if inspector_q.is_empty() {
         commands.spawn((
@@ -139,8 +146,6 @@ pub fn update_island_inspector(
         return;
     };
 
-    let total_islands = island_count.iter().count();
-
     let Ok(economy) = selected_island.single() else {
         node.display = Display::None;
         return;
@@ -149,9 +154,8 @@ pub fn update_island_inspector(
 
     let mut s = String::new();
     s.push_str("Selected Island\n");
-    s.push_str(&format!("  Islands: {}\n", total_islands));
     s.push_str(&format!(
-        "  Population: {:.0}\n",
+        "  Population: {:.0}K\n",
         economy.population.max(0.0)
     ));
     s.push_str(&format!("  Cash: {:.0}\n", economy.cash.max(0.0)));

@@ -23,9 +23,10 @@ const DEFAULT_MARKET_SPREAD: f32 = 0.10;
 const ROUTE_LEARNING_RATE: f32 = 0.20;
 const ROUTE_LEARNING_DECAY: f32 = 0.98;
 const BASE_CARGO_VOLUME_CAPACITY: f32 = 22.0;
-const BASE_LABOR_RATE: f32 = 0.0002;
-const BASE_WEAR_RATE: f32 = 0.00006;
+pub const BASE_LABOR_RATE: f32 = 0.0002;
+pub const BASE_WEAR_RATE: f32 = 0.00006;
 #[allow(dead_code)]
+const RESERVE_PRICE_FLOOR: f32 = 0.60;
 const DOCK_IDLE_RISK_RAMP_PER_TICK: f32 = 0.015;
 #[allow(dead_code)]
 const MAX_DOCK_IDLE_RISK_ALLOWANCE: f32 = 1.5;
@@ -55,8 +56,8 @@ impl Default for PlanningTuning {
     }
 }
 
-pub const BASE_LABOR_RATE_PUB: f32 = BASE_LABOR_RATE;
-pub const BASE_WEAR_RATE_PUB: f32 = BASE_WEAR_RATE;
+/// Target fleet size per island, used by friction, fleet evolution, and HUD.
+pub const TARGET_SHIPS_PER_ISLAND: f32 = 3.0;
 
 const MIN_SHIP_SPEED: f32 = 120.0;
 const MAX_SHIP_SPEED: f32 = 600.0;
@@ -452,6 +453,12 @@ impl ShipState {
         }
         let bid_price = island.bid_price(resource, tuning.market_spread);
         if !bid_price.is_finite() || bid_price <= 0.0 {
+            return self.last_dock_action;
+        }
+
+        // Refuse to sell at a big loss — clear target so departure planning picks a better port.
+        if self.purchase_price > 0.0 && bid_price < self.purchase_price * RESERVE_PRICE_FLOOR {
+            self.target_island_id = None;
             return self.last_dock_action;
         }
 

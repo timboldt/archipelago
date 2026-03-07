@@ -8,12 +8,11 @@ use crate::components::{
 };
 use crate::island::IslandEconomy;
 use crate::resources::{PlanningTuningRes, ShipMeshes, SimulationTick};
-use crate::ship::{ShipState, STARTING_CASH};
+use crate::ship::{ShipState, STARTING_CASH, TARGET_SHIPS_PER_ISLAND};
 
 const SCUTTLE_THRESHOLD_MULTIPLIER: f32 = 0.35;
 const BIRTH_THRESHOLD_MULTIPLIER: f32 = 2.5;
 const BIRTH_FEE_MULTIPLIER: f32 = 1.0;
-const TARGET_SHIPS_PER_ISLAND: f32 = 12.0;
 const LIFECYCLE_CHECK_INTERVAL_TICKS: u64 = 30;
 const MUTATION_STRENGTH: f32 = 0.05;
 
@@ -36,7 +35,7 @@ pub fn evolve_fleet(world: &mut World) {
     let island_count = num_islands.max(1) as f32;
     let target_population = (island_count * TARGET_SHIPS_PER_ISLAND).max(1.0);
     let fleet_pressure = (num_ships as f32 / target_population).max(1.0);
-    let crowding_factor = (num_ships as f32 / target_population).max(0.35);
+    let crowding_factor = (num_ships as f32 / target_population).max(0.10);
     let cost_factor = (base_tuning.global_friction_mult * crowding_factor).clamp(0.2, 6.0);
 
     let scuttle_threshold = STARTING_CASH * SCUTTLE_THRESHOLD_MULTIPLIER * fleet_pressure;

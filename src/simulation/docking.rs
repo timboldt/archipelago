@@ -11,10 +11,9 @@ use crate::island::IslandEconomy;
 use crate::resources::{
     FrameTimingsRes, IslandPositions, PlanningTuningRes, RouteHistory, SimulationTick,
 };
-use crate::ship::{LoadPlanningContext, PlanningTuning, ShipState};
+use crate::ship::{LoadPlanningContext, PlanningTuning, ShipState, TARGET_SHIPS_PER_ISLAND};
 
 const MAX_DOCK_SETTLEMENT_STEPS: usize = 3;
-const TARGET_SHIPS_PER_ISLAND: f32 = 12.0;
 
 fn environmental_tuning(
     base: &PlanningTuning,
@@ -23,7 +22,7 @@ fn environmental_tuning(
 ) -> PlanningTuning {
     let island_count = num_islands.max(1) as f32;
     let target_population = (island_count * TARGET_SHIPS_PER_ISLAND).max(1.0);
-    let crowding_factor = (num_ships as f32 / target_population).max(0.35);
+    let crowding_factor = (num_ships as f32 / target_population).max(0.10);
     let mut tuning = *base;
     tuning.global_friction_mult *= crowding_factor;
     tuning
