@@ -10,12 +10,17 @@ use crate::resources::{IslandEntityMap, IslandPositions, RouteHistory};
 
 /// Width/height of the square simulation space in world units.
 pub const WORLD_SIZE: f32 = 5000.0;
+/// Buffer distance from world edge when placing islands.
 const ISLAND_SPAWN_MARGIN: f32 = 200.0;
+/// Minimum distance required between any two islands.
 const MIN_ISLAND_SPAWN_DISTANCE: f32 = 140.0;
+/// Maximum random placement retries before giving up on an island.
 const ISLAND_POSITION_ATTEMPTS: usize = 40;
 
+/// Total number of islands spawned in the world.
 pub const NUM_ISLANDS: usize = 50;
 
+/// Rolling window (in ticks) for tracking route congestion / recent departures.
 pub const ROUTE_HISTORY_WINDOW_TICKS: usize = 10;
 
 /// Base visual radius for an island with average capacity.

@@ -1,4 +1,10 @@
 //! Route utility calculation for ship planning.
+//!
+//! Route utility = (expected_revenue * confidence - costs - penalties + bonuses)
+//!
+//! Key factors: bid/ask spread, data staleness (confidence decay), market depth
+//! (island cash), storage headroom, distance/time costs (wear + labor + capital carry),
+//! price risk attenuation, broke-island penalties, and industrial/home bonuses.
 
 use bevy::prelude::Vec2;
 
@@ -8,17 +14,29 @@ use crate::components::{
 
 use super::{PlanningTuning, ShipState};
 
+/// Confidence multiplier when island cash data is unknown/stale.
 const UNKNOWN_CASH_CONFIDENCE_SCALE: f32 = 0.70;
+/// Assumed island cash when no data is available.
 const DEFAULT_MARKET_DEPTH_FALLBACK: f32 = 600.0;
+/// Tick window for considering an island "recently broke."
 const RECENT_BROKE_TICKS: f32 = 180.0;
+/// Flat utility penalty applied to destinations flagged as recently broke.
 const BROKE_ISLAND_UTILITY_PENALTY: f32 = 5.5;
+/// Cash-to-cargo-value ratio below which the broke penalty applies.
 const BROKE_CASH_COVERAGE_RATIO: f32 = 0.35;
+/// Cash threshold for hard-blocking a destination as broke.
 const BROKE_DESTINATION_BLOCK_CASH: f32 = 1.0;
+/// Maximum data age (ticks) for the hard broke-destination block.
 const BROKE_DESTINATION_BLOCK_MAX_AGE: f32 = 180.0;
+/// Infrastructure level above which an island counts as industrial.
 const INDUSTRIAL_INFRA_THRESHOLD: f32 = 1.5;
+/// Bonus per unit of infrastructure for delivering Iron/Timber to industrial islands.
 const INDUSTRIAL_INPUT_BONUS_PER_INFRA: f32 = 4.0;
+/// Cap on the industrial input delivery bonus.
 const INDUSTRIAL_INPUT_BONUS_CAP: f32 = 14.0;
+/// Confidence reduction weight for expensive cargo (price risk attenuation).
 const HIGH_PRICE_RISK_WEIGHT: f32 = 0.65;
+/// Flat utility bonus for routes returning to the ship's home island.
 const HOME_ISLAND_UTILITY_BONUS: f32 = 8.0;
 
 pub(super) struct UtilityContext<'a> {

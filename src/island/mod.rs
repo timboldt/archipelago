@@ -14,60 +14,117 @@ use crate::components::{
     COMMODITY_COUNT, INVENTORY_CARRYING_CAPACITY,
 };
 
+// --- Island initialization ranges ---
+/// Range for starting population.
 const INITIAL_POPULATION_MIN: f32 = 45.0;
 const INITIAL_POPULATION_MAX: f32 = 140.0;
+/// Range for starting cash reserves.
 const INITIAL_CASH_MIN: f32 = 900.0;
 const INITIAL_CASH_MAX: f32 = 2600.0;
+/// Range for starting infrastructure level.
 const INITIAL_INFRASTRUCTURE_MIN: f32 = 0.7;
 const INITIAL_INFRASTRUCTURE_MAX: f32 = 1.5;
+/// Range for starting infrastructure credit (funds earmarked for capital investment).
 const INITIAL_INFRA_CREDIT_MIN: f32 = 900.0;
 const INITIAL_INFRA_CREDIT_MAX: f32 = 2600.0;
+/// Range for island visual/capacity size factor.
 const ISLAND_SIZE_FACTOR_MIN: f32 = 0.35;
 const ISLAND_SIZE_FACTOR_MAX: f32 = 2.0;
+
+// --- Population dynamics ---
+/// Minimum population floor; islands cannot shrink below this.
 const MIN_POPULATION: f32 = 8.0;
+/// Per-tick fractional population growth when food is adequate.
 const POPULATION_GROWTH_RATE: f32 = 0.07;
+/// Per-tick fractional population decline when food is scarce.
 const POPULATION_STARVATION_RATE: f32 = 0.08;
+
+// --- Production / consumption tuning ---
+/// Grain consumed per capita to maintain population stability.
 const GRAIN_PER_CAPITA_STABILITY: f32 = 0.07;
+/// Base rate of tool fabrication before adaptive adjustments.
 const TOOL_FABRICATION_BASE_RATE: f32 = 0.45;
+/// Bonus multiplier for grain extraction (farming yield).
 const GRAIN_EXTRACTION_BONUS: f32 = 1.35;
+/// Bonus multiplier for timber extraction (logging yield).
 const TIMBER_EXTRACTION_BONUS: f32 = 1.25;
+/// Iron consumed per tool fabrication batch.
 const TOOL_IRON_PER_BATCH: f32 = 1.35;
+/// Timber consumed per tool fabrication batch.
 const TOOL_TIMBER_PER_BATCH: f32 = 1.0;
+/// Tools produced per fabrication batch.
 const TOOL_OUTPUT_PER_BATCH: f32 = 2.2;
+/// Desired tools per 1000 population for adaptive fabrication targeting.
 const TARGET_TOOLS_PER_1K_POP: f32 = 50.0;
+/// How aggressively fabrication rate adjusts toward the target.
 const TOOL_FABRICATOR_ADAPTIVE_GAIN: f32 = 0.7;
+/// Maximum adaptive multiplier on tool fabrication rate.
 const TOOL_FABRICATOR_ADAPTIVE_CAP: f32 = 1.8;
+/// Fractional per-tick tool wear/consumption.
 const TOOLS_CONSUMPTION_SCALE: f32 = 0.04;
+/// Labor fraction devoted to industry, scaled by infrastructure.
 const INDUSTRIAL_LABOR_SCALING: f32 = 0.012;
+/// Logarithmic scale factor for scarcity-based pricing.
 const SCARCITY_LOG_SCALE: f32 = 2.4;
+/// Reference inventory level for scarcity price normalization.
 const SCARCITY_REFERENCE: f32 = 120.0;
+
+// --- Island resource specialization ---
+/// Probability an island has zero specialization in a given commodity.
 const SPECIALIZATION_ZERO_PROBABILITY: f32 = 0.40;
+/// Higher zero-probability for spice specialization (rarer resource).
 const SPICE_SPECIALIZATION_ZERO_PROBABILITY: f32 = 0.75;
+
+// --- Focus resource boost ---
+/// Production multiplier applied to the island's focus commodity.
 const FOCUS_PRODUCTION_BOOST: f32 = 2.8;
+/// Production multiplier for non-focus commodities.
 const NON_FOCUS_PRODUCTION_SCALE: f32 = 0.45;
+
+/// Maximum productivity multiplier from tool availability.
 const TOOLS_PRODUCTIVITY_CAP: f32 = 2.0;
+/// How quickly tool availability converts to productivity gain.
 const TOOLS_PRODUCTIVITY_SCALE: f32 = 0.22;
 
-// Governor constants
+// --- Governor: labor allocation ---
+/// EMA smoothing factor for governor labor share adjustments.
 const GOVERNOR_SMOOTHING: f32 = 0.15;
+/// Sigmoid scale for commodity urgency calculation.
 const URGENCY_SCALE: f32 = 10.0;
+/// Sigmoid offset for commodity urgency calculation.
 const URGENCY_OFFSET: f32 = 1.0;
+/// Relative labor priority weights per commodity.
 const GRAIN_PRIORITY_WEIGHT: f32 = 3.0;
 const TIMBER_PRIORITY_WEIGHT: f32 = 1.0;
 const IRON_PRIORITY_WEIGHT: f32 = 1.0;
 const SPICES_PRIORITY_WEIGHT: f32 = 0.4;
+/// Minimum fraction of labor always allocated to grain.
 const GRAIN_LABOR_FLOOR: f32 = 0.15;
+/// Scale factor for tool-chain labor demand (iron + timber for tools).
 const TOOL_CHAIN_SCALE: f32 = 4.0;
+/// Iron share of tool-chain labor weight.
 const IRON_FOR_TOOLS_WEIGHT: f32 = 0.6;
+/// Timber share of tool-chain labor weight.
 const TIMBER_FOR_TOOLS_WEIGHT: f32 = 0.4;
+/// Inventory reference level for demand destruction dampening.
 const DEMAND_DESTRUCTION_REFERENCE: f32 = 20.0;
+/// Spice productivity scaling from spice specialization level.
 const SPICE_PRODUCTIVITY_SCALE: f32 = 0.12;
+/// Cap on spice productivity multiplier.
 const SPICE_PRODUCTIVITY_CAP: f32 = 1.20;
+
+// --- Infrastructure / capital investment ---
+/// Per-capita infrastructure credit generation per tick.
 const PER_CAPITA_INFRA_CREDIT_GENERATION: f32 = 0.05;
+/// Extra infra credit generation from industrial activity.
 const INDUSTRIAL_INFRA_CREDIT_GENERATION: f32 = 0.30;
+/// Minimum infra credit balance before capital investment triggers.
 const CAPITAL_INVESTMENT_THRESHOLD: f32 = 1600.0;
+/// Fraction of excess credits invested per tick.
 const CAPITAL_INVESTMENT_RATE: f32 = 0.06;
+/// Credits-to-infrastructure conversion efficiency.
 const INFRASTRUCTURE_INVESTMENT_EFFICIENCY: f32 = 0.00032;
+/// Hard cap on infrastructure level.
 const MAX_INFRASTRUCTURE_LEVEL: f32 = 3.5;
 
 /// Core island economy state and market operations — used as a Bevy Component.
@@ -133,6 +190,9 @@ impl IslandEconomy {
             };
         }
 
+        // Ensure at least one raw industrial resource (Timber or Iron) has
+        // meaningful production — without this, the island can never fabricate
+        // tools locally or contribute industrial inputs to the trade network.
         if production_rates[Commodity::Timber.idx()] <= 0.0
             && production_rates[Commodity::Iron.idx()] <= 0.0
         {

@@ -1,4 +1,9 @@
 //! Fleet evolution system — cull/spawn ships periodically.
+//!
+//! Runs every `LIFECYCLE_CHECK_INTERVAL_TICKS` ticks and performs:
+//! 1. **Scuttle** — remove ships below the net-worth threshold
+//! 2. **Birth** — wealthy ships spawn daughter ships with mutated traits
+//! 3. **Isolated restocking** — islands without recent trade spawn a new ship
 
 use bevy::prelude::*;
 
@@ -18,48 +23,45 @@ const MUTATION_STRENGTH: f32 = 0.05;
 const ISLAND_SPAWN_DROUGHT_TICKS: u64 = 600;
 const ISLAND_SPAWN_SHIP_COST: f32 = 150.0;
 
-pub fn evolve_fleet(world: &mut World) {
-    let tick = world.resource::<SimulationTick>().0;
-    if !tick.is_multiple_of(LIFECYCLE_CHECK_INTERVAL_TICKS) {
-        return;
-    }
-
-    let num_islands = world
-        .query_filtered::<(), With<IslandMarker>>()
-        .iter(world)
-        .count();
-    let num_ships = world
-        .query_filtered::<(), With<ShipMarker>>()
-        .iter(world)
-        .count();
-
-    let base_tuning = world.resource::<PlanningTuningRes>().0;
+/// Compute lifecycle thresholds based on fleet saturation and friction.
+fn lifecycle_thresholds(
+    num_islands: usize,
+    num_ships: usize,
+    global_friction_mult: f32,
+) -> (f32, f32, f32) {
     let island_count = num_islands.max(1) as f32;
     let target_population = (island_count * TARGET_SHIPS_PER_ISLAND).max(1.0);
     let fleet_pressure = (num_ships as f32 / target_population).max(1.0);
     let crowding_factor = (num_ships as f32 / target_population).max(0.10);
-    let cost_factor = (base_tuning.global_friction_mult * crowding_factor).clamp(0.2, 6.0);
+    let cost_factor = (global_friction_mult * crowding_factor).clamp(0.2, 6.0);
 
-    let scuttle_threshold = STARTING_CASH * SCUTTLE_THRESHOLD_MULTIPLIER * fleet_pressure;
-    let birth_threshold = STARTING_CASH * BIRTH_THRESHOLD_MULTIPLIER * cost_factor * fleet_pressure;
-    let birth_fee = STARTING_CASH * BIRTH_FEE_MULTIPLIER * cost_factor * fleet_pressure;
+    let scuttle = STARTING_CASH * SCUTTLE_THRESHOLD_MULTIPLIER * fleet_pressure;
+    let birth = STARTING_CASH * BIRTH_THRESHOLD_MULTIPLIER * cost_factor * fleet_pressure;
+    let fee = STARTING_CASH * BIRTH_FEE_MULTIPLIER * cost_factor * fleet_pressure;
+    (scuttle, birth, fee)
+}
 
-    // Collect all ship entities with their state.
-    let mut ship_entities: Vec<Entity> = Vec::new();
-    {
-        let mut query = world.query_filtered::<Entity, With<ShipMarker>>();
-        for entity in query.iter(world) {
-            ship_entities.push(entity);
-        }
-    }
-
+/// Evaluate each ship for scuttling (too poor) or birthing (wealthy enough).
+#[allow(clippy::type_complexity)]
+fn evaluate_lifecycle(
+    world: &mut World,
+    ship_entities: &[Entity],
+    scuttle_threshold: f32,
+    birth_threshold: f32,
+    birth_fee: f32,
+) -> (
+    Vec<Entity>,       // to_despawn
+    Vec<ShipState>,    // daughters
+    Vec<(usize, f32)>, // island_birth_credits
+    Vec<(usize, f32)>, // island_scuttle_settlements
+) {
     let mut rng = ::rand::thread_rng();
     let mut to_despawn: Vec<Entity> = Vec::new();
     let mut daughters: Vec<ShipState> = Vec::new();
     let mut island_birth_credits: Vec<(usize, f32)> = Vec::new();
     let mut island_scuttle_settlements: Vec<(usize, f32)> = Vec::new();
 
-    for entity in &ship_entities {
+    for entity in ship_entities {
         let entity_ref = world.entity(*entity);
         let pos = entity_ref.get::<Position>().unwrap().0;
         let movement = entity_ref.get::<ShipMovement>().unwrap();
@@ -85,45 +87,45 @@ pub fn evolve_fleet(world: &mut World) {
                 }
                 daughters.push(daughter);
 
-                // Write back parent's cash deduction.
                 let mut entity_ref = world.entity_mut(*entity);
                 entity_ref.get_mut::<ShipTrading>().unwrap().cash = ship.current_cash();
             }
         }
     }
 
-    // Apply credits/settlements to islands.
-    let mut island_entity_map: Vec<Option<Entity>> = vec![None; num_islands];
-    {
-        let mut query = world.query_filtered::<(Entity, &IslandId), With<IslandMarker>>();
-        for (entity, id) in query.iter(world) {
-            if id.0 < num_islands {
-                island_entity_map[id.0] = Some(entity);
-            }
-        }
-    }
+    (
+        to_despawn,
+        daughters,
+        island_birth_credits,
+        island_scuttle_settlements,
+    )
+}
 
-    for (island_id, credit) in island_birth_credits {
+/// Credit birth fees and scuttle settlements to respective islands.
+fn apply_island_payments(
+    world: &mut World,
+    island_entity_map: &[Option<Entity>],
+    birth_credits: Vec<(usize, f32)>,
+    scuttle_settlements: Vec<(usize, f32)>,
+) {
+    for (island_id, credit) in birth_credits {
         if let Some(Some(entity)) = island_entity_map.get(island_id) {
             if let Some(mut economy) = world.entity_mut(*entity).get_mut::<IslandEconomy>() {
                 economy.cash += credit;
             }
         }
     }
-    for (island_id, settlement) in island_scuttle_settlements {
+    for (island_id, settlement) in scuttle_settlements {
         if let Some(Some(entity)) = island_entity_map.get(island_id) {
             if let Some(mut economy) = world.entity_mut(*entity).get_mut::<IslandEconomy>() {
                 economy.cash += settlement;
             }
         }
     }
+}
 
-    // Despawn scuttled ships.
-    for entity in to_despawn {
-        world.despawn(entity);
-    }
-
-    // Spawn daughters — each gets its own material for cargo coloring.
+/// Spawn daughter ships and ships at isolated (trade-starved) islands.
+fn spawn_new_ships(world: &mut World, daughters: Vec<ShipState>, num_islands: usize, tick: u64) {
     let ship_meshes = world.resource::<ShipMeshes>();
     let clipper_mesh = ship_meshes.clipper.clone();
     let freighter_mesh = ship_meshes.freighter.clone();
@@ -201,4 +203,62 @@ pub fn evolve_fleet(world: &mut World) {
             Transform::from_translation(pos.extend(1.0)),
         ));
     }
+}
+
+pub fn evolve_fleet(world: &mut World) {
+    let tick = world.resource::<SimulationTick>().0;
+    if !tick.is_multiple_of(LIFECYCLE_CHECK_INTERVAL_TICKS) {
+        return;
+    }
+
+    let num_islands = world
+        .query_filtered::<(), With<IslandMarker>>()
+        .iter(world)
+        .count();
+    let num_ships = world
+        .query_filtered::<(), With<ShipMarker>>()
+        .iter(world)
+        .count();
+
+    let base_tuning = world.resource::<PlanningTuningRes>().0;
+    let (scuttle_threshold, birth_threshold, birth_fee) =
+        lifecycle_thresholds(num_islands, num_ships, base_tuning.global_friction_mult);
+
+    // Collect all ship entities.
+    let ship_entities: Vec<Entity> = {
+        let mut query = world.query_filtered::<Entity, With<ShipMarker>>();
+        query.iter(world).collect()
+    };
+
+    let (to_despawn, daughters, birth_credits, scuttle_settlements) = evaluate_lifecycle(
+        world,
+        &ship_entities,
+        scuttle_threshold,
+        birth_threshold,
+        birth_fee,
+    );
+
+    // Build island entity map for crediting payments.
+    let mut island_entity_map: Vec<Option<Entity>> = vec![None; num_islands];
+    {
+        let mut query = world.query_filtered::<(Entity, &IslandId), With<IslandMarker>>();
+        for (entity, id) in query.iter(world) {
+            if id.0 < num_islands {
+                island_entity_map[id.0] = Some(entity);
+            }
+        }
+    }
+
+    apply_island_payments(
+        world,
+        &island_entity_map,
+        birth_credits,
+        scuttle_settlements,
+    );
+
+    for entity in to_despawn {
+        world.despawn(entity);
+    }
+
+    spawn_new_ships(world, daughters, num_islands, tick);
 }

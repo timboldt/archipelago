@@ -1,25 +1,20 @@
 
 # Archipelago
 
-An archipelago economic simulation in Rust. Islands produce and consume goods, ships move between islands, trade cargo, and share market information through local ledger syncs.
+An archipelago economic simulation in Rust, built on **Bevy 0.16** ECS. Islands produce and consume goods, autonomous ship agents trade between them, and market information propagates only through local ship-island ledger merges (a gossip protocol) — there is no global broadcast.
 
 ## Current Status
 
-The project currently implements a working simulation scaffold with a phased world update loop:
+A working simulation with a phased ECS update loop:
 
-1. Island production/consumption update and local price recompute
-2. Ship movement toward targets
-3. Docked ship processing (island-batched):
-	- unload cargo (sell)
-	- reprice island market
-	- load cargo (buy)
-	- merge ship gossip into island ledgers in a parallel buffered phase
-	- plan departure target from a stable merged island-ledger snapshot
-	- process island batches in parallel and reinsert ships by stable global slot ID
+1. **TickAdvance** — advance the simulation tick and rebuild cached island positions
+2. **Economy** — island production, consumption, population dynamics, and local price recompute
+3. **Movement** — ships move toward their target islands
+4. **Friction** — accrue maritime friction costs (labor/provisions + distance-based repair wear)
+5. **Docking** — docked ships sell cargo, settle debt, reload, merge ledgers, and plan departure
+6. **FleetEvolution** — scuttle bankrupt/weak ships, spawn daughter ships from wealthy parents
 
-At startup, ships begin docked and load cargo before their first departure.
-
-Each ship can perform at most one dock action per tick (`sell` or `buy`, not both).
+At startup, ships begin docked at their home island and load cargo before their first departure.
 
 ## Quick Start
 
@@ -29,6 +24,8 @@ cargo run
 cargo test
 ```
 
+Bevy `dynamic_linking` is enabled in the dev profile for faster iteration builds.
+
 ## Development Hygiene
 
 ```sh
@@ -36,96 +33,139 @@ cargo clippy --all-targets
 cargo +nightly fmt
 ```
 
-## Simulation Notes
+## Controls
 
-- **World size:** 5000×5000 simulation space rendered with a `macroquad` camera.
-- **Island spawn spacing:** Islands spawn with a minimum separation target to reduce chart/icon overlap in dense regions.
-- **Island visuals:** Islands are drawn as compact 5-bar charts for Grain, Timber, Iron, Tools, and Spices abundance.
-- **Island module boundaries:** `Island` now contains economy/market logic only; world-space island rendering lives under `src/world/` UI helpers.
-- **Ship module boundaries:** `Ship` now contains movement/planning/settlement logic only; world-space ship rendering lives under `src/world/` UI helpers.
-- **Ship visuals:** Ship shape encodes archetype (Freighter = square, Clipper = triangle, Shorthaul = circle), and ship color reflects the currently carried cargo resource.
-- **Island status bars:** Each island chart now includes three horizontal bars beneath it for Population, Cash, and Infrastructure.
-- **Chart readability:** Island chart dimensions are scaled from current view units-per-pixel so bars stay legible across zoom/viewport changes.
-- **UI legend:** A fixed top-left legend maps resource colors (and empty ships) for quick visual decoding.
-- **Ship shape key:** The same panel includes a compact ship-shape legend (Clipper triangle, Freighter square, Shorthaul circle).
-- **Legend counters:** The legend now shows total archipelago inventory beside each resource label.
-- **Macro counters:** The same panel also shows global Population, global Cash, and average Industry (infrastructure level).
-- **Tuning HUD:** The left panel shows effective global friction for ship economics.
-- **Fleet HUD:** The panel shows current ship count plus archetype mix (`Cl/Fr/Sh` = Clipper/Freighter/Shorthaul).
-- **Ship inspector HUD:** A top-right panel shows one selected ship's details (archetype, status, speed, cargo volume usage, rigging/labor rates, cash, and dominant cargo by value).
-- **Selection highlight:** The currently selected ship is marked in world space with a red ring.
-- **Island inspector HUD:** A second top-right panel shows one selected island's details (population, cash, infrastructure, inventory mix, and local prices).
-- **Island highlight:** The currently selected island is highlighted in world space with a bold red border.
-- **Resources:** Grain, Timber, Iron, Tools, Spices.
-- **Cargo volume:** Resources have per-unit volume; Grain is bulky while Tools/Spices are compact, so value density matters for ship loading.
+| Key | Action |
+|-----|--------|
+| WASD / Arrow keys | Pan camera |
+| Q / E | Zoom out / in |
+| Scroll wheel | Zoom toward cursor |
+| Mouse drag | Pan camera |
+| Click | Select nearest ship or island |
+| `[` / `]` | Cycle selected ship (prev / next) |
+| Shift + `[` / Shift + `]` | Cycle selected island (prev / next) |
+| `-` / `=` | Decrease / increase simulation speed (0.25x steps) |
+| `\` | Reset simulation speed to 1.0x |
+
+Selection is mutually exclusive: selecting a ship deselects the island and vice versa.
+
+## Visuals
+
+- **Islands** are irregular polygon meshes colored by dominant production: sandy tan (Grain), dark forest green (Timber), rocky grey (Iron), terracotta (Spices), muted olive (Tools). Size scales with population capacity.
+- **Ships** encode archetype by shape: triangle (Clipper), rectangle (Freighter), circle (Shorthaul). Ship color reflects the currently carried cargo resource.
+- **Selection highlight** — the selected ship or island is marked with a highlight ring/border in world space.
+- **HUD panels** — text-based panels overlay the viewport:
+  - *Left panel:* global resource totals, ship count and archetype mix, population, cash, average infrastructure, effective friction, and frame performance timing.
+  - *Top-right panels:* ship inspector (archetype, status, speed, cargo, cash, etc.) and island inspector (population, cash, infrastructure, inventory, local prices).
+
+## Simulation Design
+
+### Economy
+
+- **5 commodities:** Grain, Timber, Iron, Tools, Spices.
+- **Cargo volume:** Resources have per-unit volume (Grain is bulky; Tools and Spices are compact), so value density matters for ship loading.
 - **Prices:** Island-local with a damped scarcity curve (log-shaped pressure) to avoid extreme low-inventory spikes.
-- **Price incentives:** Tools base value is elevated (120), and Spices are modeled as a luxury good with a high base value (180).
-- **Population engine:** Islands now track `population` with a smooth (non-binary) grain-balance response curve; grain abundance supports growth while scarcity increases shrink pressure gradually.
-- **Production dynamics:** Tier-1 goods (Grain, Timber, Iron) are labor-driven and scale with population (plus logistic damping), so larger islands produce and consume more.
-- **Differentiated consumption:** Grain is the dominant population sink, Tools are moderate/durable, and Timber/Iron passive consumption is low so industrial inputs can accumulate.
-- **Tool durability:** Tool demand is explicitly down-scaled relative to other goods to avoid consuming tools faster than the manufacturing system can replenish them.
-- **Tier-2 industry:** Tools are manufactured (not passively extracted) by converting Timber + Iron, scaled by island `infrastructure_level`, creating potential industrial hubs.
-- **Industrial scaling:** Tool fabrication now scales with both infrastructure and available labor (population), so growing islands can expand manufacturing throughput.
-- **Adaptive controller:** Islands apply a capped fabrication boost when local `Tools / 1k pop` falls below a target floor, helping prevent long-run tool collapse.
-- **Industrial throughput:** Tool fabrication now runs with a moderated base rate (`0.45`) and moderated output per batch (`2.2`) to curb long-run tools overshoot while preserving replenishment.
-- **Supply-chain rebalance:** Timber extraction is now biased higher than iron extraction, and tool fabrication consumes more iron per batch while producing more tools, which helps drain iron gluts and raise tool availability.
-- **Comparative advantage:** Islands are now initialized with partial resource scarcity (including forced-zero extraction in some resources) and a boosted focus resource, creating stronger specialization and trade dependency.
-- **Luxury specialization:** Spices are intentionally rarer at production time than staple resources, creating higher-value but less ubiquitous trade opportunities.
-- **Specialization tuning:** Timber/Iron zero-production probability is reduced to `0.20` to preserve baseline raw-material flow while still allowing specialization.
-- **Survival safety net:** If an island falls to minimum population while starving, it automatically re-prioritizes grain extraction to restart its local economy.
-- **Tools as multiplier:** Tool stock boosts raw extraction productivity up to a cap, creating industrial demand for tools beyond pure arbitrage.
-- **Island capital:** Islands now carry finite `cash`; they can only buy from ships up to affordability, and earn cash when ships purchase local inventory.
-- **Island size limits:** Each island now has latent size/endowment caps for per-resource inventory, population, and infrastructure, which flatten growth near limits.
-- **Closed-loop island cash:** Islands no longer mint/burn cash from endogenous production/upkeep terms; trade and dock settlements are the primary cash-flow paths.
-- **Infrastructure credit loop:** Islands accrue internal infrastructure credit (separate from cash) and spend that credit on infrastructure growth.
-- **Transport cost:** Planning continues to price distance/time friction into expected utility so route choice remains cost-aware.
-- **Maritime friction:** Ships accrue (1) time-based labor/provisions and (2) distance-based repair wear as dock-payable debt.
-- **Dock settlement:** After selling cargo, ships settle accrued labor/repair debt to the island before loading the next leg.
-- **Dynamic docking tax:** Ports levy a liquidity-aware tax on ship cash surplus (above a reserve) when dock actions occur; rates rise when ships are cash-rich relative to the island.
-- **Dock-only bankruptcy:** Bankruptcy culling is resolved at dock; a bankrupt ship transfers its remaining cash to the docked island before removal.
-- **Provision scarcity ceiling:** Friction self-adjusts with fleet crowding (ships vs target ships per island), creating a self-limiting competitive overhead as population grows.
-- **Pair-based load selection:** Empty ships score all `(local resource → destination island)` pairs and buy the resource with the best expected utility, rather than picking the cheapest local good first.
-- **Anti-roundtrip guard:** A ship will not immediately reload the same resource it just sold in the same dock cycle.
-- **Information flow:** Price ledgers are merged only during ship-island docking interactions, with a dedicated parallel per-island buffered merge and stable snapshot reads so island world-view does not shift mid-tick due to ship-processing order.
-- **Stable ship IDs:** Fleet storage now uses stable slot IDs (`Vec<Option<Ship>>`); per-island dock processing temporarily extracts docked ships, processes in parallel, then reinserts each ship into its original slot.
-- **Planning:** Route selection uses deterministic, risk-adjusted expected-value utility over volume-constrained lot sizes (`expected profit - distance/time/carry costs - staleness risk`) with confidence decay from data staleness + transit latency.
-- **Loaded-cargo routing:** When carrying cargo, ships score each destination by computing expected utility for the single carried resource.
-- **Capital carry cost:** Utility now includes a transit-time capital lock-up penalty and high-price risk attenuation, reducing over-selection of expensive cargo when long-haul uncertainty is high.
-- **Liquidity-aware planning:** Ship ledgers now gossip destination `cash`, and route utility caps expected revenue by known market depth so traders avoid chasing phantom high prices at bankrupt islands.
-- **Storage-aware planning:** Ship ledgers also gossip inventory snapshots; utility discounts destination demand by available storage headroom so traders avoid over-delivering into saturated markets.
-- **Industrial routing bonus:** Ledgers also gossip destination infrastructure level; ships add a proportional utility bonus for delivering Iron/Timber to higher-infrastructure islands (above a threshold).
-- **Recent-broke avoidance:** Ships apply a short-lived utility penalty to destinations recently observed as cash-poor, reducing repeated revisits to liquidity-starved islands after partial unloads.
-- **Broke-route suppression:** Ships now hard-reject very recent zero-cash destinations during utility evaluation, preventing persistent back-and-forth loops between bankrupt islands.
-- **Bid/ask spread:** Islands quote a spread (buy from ships at `0.95×` local, sell to ships at `1.05×` local), reducing churn loops and helping islands rebuild reserves.
-- **Archetype profiles:** Three discrete archetypes with clear separation: Clipper (`speed≈1.5x`, `capacity≈0.75x`, `labor burn≈1.5x`), Shorthaul (`1.0x`, `1.0x`, `0.75x`, short-haul range limit), Freighter (`0.75x`, `2.0x`, `1.0x`) before efficiency modulation. Archetype is fixed at spawn; daughters inherit the parent's archetype with a small chance of random mutation.
-- **Wealth tax / upkeep:** Ships accrue trait-derived labor/provisions and wear liabilities in transit/dock phases, and also face liquidity-aware docking taxes, so persistently unprofitable traders eventually fail lifecycle thresholds.
-- **Bankruptcy failure:** If a ship arrives deeply insolvent and cannot recover via dock settlement (sell phase), it is culled immediately (using a negative-cash floor rather than zero).
-- **Lifecycle selection:** Fleet composition evolves over time: low-cash ships are retired, while wealthy ships can split into daughter ships with small Gaussian strategy mutations (not restricted to docked-only parents).
-- **Scuttle semantics:** Scuttled ships are marked as empty slots (`None`) instead of compacting the ship array, and their remaining cash is applied to their last docked island.
-- **Birth throttling:** Daughter creation now pays a birth fee and uses a pressure-scaled threshold tied to effective global friction and fleet saturation (ships per island), curbing runaway fleet growth.
-- **Birth fee routing:** Daughter birth fees are credited to the parent ship's docked island instead of being removed from the economy.
-- **Trader phenotypes:** Mutated strategy genes include confidence-decay scaling and risk tolerance.
-- **Derived ship costs:** Trade planning and settlement derive `cost_per_distance` and `cost_per_time` from ship traits (speed/distance-cost rate and maintenance/hull profile), rather than independent tuning dials.
-- **Dock cadence:** Ships that sell on a tick stay docked for at least that tick (no immediate departure while empty), then can reload and depart on a following tick.
-- **Dock risk ramp:** Empty ships become gradually more willing to take slightly negative-utility loads the longer they wait docked, helping break deadlock states.
-- **Least-worst loading:** Empty ships now load the best finite lane even when utility is negative, preventing dock deadlocks where all options are unattractive.
-- **Forced post-load departure:** Once a ship loads, it keeps its planned outbound target and departs instead of waiting docked for a positive re-evaluation.
-- **Dock performance path:** Dock settlement iterations are capped lower, loaded ships use a preselected post-load destination fast-path when viable, and loaded ships skip full destination rescans on ticks where dock actions did not change cargo.
-- **Tuning controls:** `main.rs` exposes environmental constants (`global_friction_mult`, `info_decay_rate`, `market_spread`) and applies them via `World::set_planning_tuning(...)`.
-- **Ship selection controls:** Press `[` and `]` during runtime to cycle the selected ship in the top-right inspector panel.
-- **Island selection controls:** Press `{` and `}` (Shift + `[` / Shift + `]`) to cycle the selected island in the island inspector panel.
-- **Time-scale controls:** Press `-` / `=` to decrease/increase simulation speed, and `\` to reset to `1.0x`.
-- **Debug snapshot control:** Press `F9` to write a runtime snapshot (`debug_snapshot_tick_<tick>.txt`) with selected ship/island details, docked-empty ship buy-capacity diagnostics, and per-ship load-utility scan stats (`scanned/feasible/best utility`).
+- **Price incentives:** Tools have an elevated base value (120) and Spices are a luxury good with a high base value (180).
+- **Bid/ask spread:** Islands quote a spread (buy from ships below local price, sell to ships above), reducing churn loops and helping islands rebuild reserves.
 
-## Tech Stack (Current)
+### Islands
+
+- **Population engine:** Islands track population with a smooth grain-balance response curve; grain abundance supports growth while scarcity increases shrink pressure gradually.
+- **Production dynamics:** Tier-1 goods (Grain, Timber, Iron) are labor-driven and scale with population plus logistic damping.
+- **Differentiated consumption:** Grain is the dominant population sink, Tools are moderate/durable, and Timber/Iron passive consumption is low so industrial inputs can accumulate.
+- **Tier-2 industry:** Tools are manufactured (not passively extracted) by converting Timber + Iron, scaled by island infrastructure level, creating potential industrial hubs. Fabrication also scales with available labor (population).
+- **Adaptive controller:** Islands apply a capped fabrication boost when local Tools per capita falls below a target floor, preventing long-run tool collapse.
+- **Comparative advantage:** Islands are initialized with partial resource scarcity (including forced-zero extraction in some resources) and a boosted focus resource, creating specialization and trade dependency.
+- **Luxury specialization:** Spices are intentionally rarer at production time, creating higher-value but less ubiquitous trade opportunities.
+- **Survival safety net:** If an island falls to minimum population while starving, it automatically re-prioritizes grain extraction.
+- **Tools as multiplier:** Tool stock boosts raw extraction productivity up to a cap, creating demand for tools beyond pure arbitrage.
+- **Island capital:** Islands carry finite cash; they can only buy from ships up to affordability, and earn cash when ships purchase local inventory.
+- **Island size limits:** Each island has latent size/endowment caps for inventory, population, and infrastructure that flatten growth near limits.
+- **Closed-loop cash:** Islands no longer mint/burn cash from production/upkeep; trade and dock settlements are the primary cash-flow paths.
+- **Infrastructure credit loop:** Islands accrue internal infrastructure credit (separate from cash) and spend it on infrastructure growth.
+
+### Ships
+
+- **Archetype profiles:** Three discrete archetypes — Clipper (fast, low capacity, high labor burn), Shorthaul (standard speed/capacity, low overhead, range-limited), Freighter (slow, high capacity, standard overhead). Archetype is fixed at spawn; daughters inherit with a small chance of random mutation.
+- **Pair-based load selection:** Empty ships score all (local resource, destination island) pairs and buy the resource with the best expected utility.
+- **Anti-roundtrip guard:** Ships will not immediately reload the same resource they just sold in the same dock cycle.
+- **Loaded-cargo routing:** When carrying cargo, ships score each destination by expected utility for the carried resource.
+- **Capital carry cost:** Utility includes transit-time capital lock-up penalty and high-price risk attenuation.
+- **Liquidity-aware planning:** Ship ledgers gossip destination cash; route utility caps expected revenue by known market depth.
+- **Storage-aware planning:** Ship ledgers gossip inventory snapshots; utility discounts destination demand by available storage headroom.
+- **Industrial routing bonus:** Ledgers gossip destination infrastructure level; ships add a utility bonus for delivering Iron/Timber to higher-infrastructure islands.
+- **Recent-broke avoidance:** Ships apply a short-lived utility penalty to destinations recently observed as cash-poor, and hard-reject very recent zero-cash destinations.
+- **Dock risk ramp:** Empty ships become gradually more willing to take slightly negative-utility loads the longer they wait docked, preventing deadlocks.
+- **Least-worst loading:** Empty ships load the best finite lane even when utility is negative.
+- **Forced post-load departure:** Once a ship loads, it keeps its planned target and departs.
+
+### Maritime Friction
+
+- **Transport cost:** Planning prices distance/time friction into expected utility so route choice is cost-aware.
+- **Maritime friction:** Ships accrue time-based labor/provisions and distance-based repair wear as dock-payable debt.
+- **Dock settlement:** After selling cargo, ships settle accrued labor/repair debt to the island before reloading.
+- **Dynamic docking tax:** Ports levy a liquidity-aware tax on ship cash surplus when dock actions occur.
+- **Provision scarcity ceiling:** Friction self-adjusts with fleet crowding (ships vs target ships per island), creating self-limiting competitive overhead.
+
+### Information Flow
+
+- **Gossip protocol:** Price ledgers merge only during ship-island docking interactions. There is no global broadcast.
+- **Confidence decay:** Planning uses risk-adjusted expected-value utility with confidence decay from data staleness and transit latency.
+- **Trader phenotypes:** Strategy genes include confidence-decay scaling and risk tolerance, mutated across generations.
+
+### Fleet Evolution
+
+- **Lifecycle selection:** Low-cash ships are retired; wealthy ships can split into daughter ships with small Gaussian strategy mutations.
+- **Scuttle semantics:** Scuttled ships transfer remaining cash to their last docked island.
+- **Birth throttling:** Daughter creation pays a birth fee and uses a pressure-scaled threshold tied to effective global friction and fleet saturation.
+- **Birth fee routing:** Daughter birth fees are credited to the parent ship's docked island.
+- **Bankruptcy failure:** A ship that arrives deeply insolvent and cannot recover via dock settlement is culled immediately.
+
+## Architecture
+
+**Bevy plugin structure** (wired together in `src/main.rs`):
+
+- `SimulationPlugin` — ordered system sets: TickAdvance, Economy, Movement, Friction, Docking, FleetEvolution
+- `RenderingPlugin` — camera setup, island/ship visual updates, selection highlights (runs after simulation)
+- `UiPlugin` — HUD and inspector text panels (runs after simulation)
+- `InputPlugin` — keyboard, mouse, and scroll input (runs before simulation)
+
+**Module layout:**
+
+| Path | Purpose |
+|------|---------|
+| `src/components.rs` | All ECS components and shared types (Commodity, PriceEntry, PriceLedger, Inventory, ship components) |
+| `src/resources.rs` | All ECS resources (SimulationTick, TimeScale, PlanningTuningRes, ShipMeshes, etc.) |
+| `src/island/mod.rs` | IslandEconomy component with production/consumption/pricing logic |
+| `src/island/spawn.rs` | Island spawning, world constants (WORLD_SIZE, NUM_ISLANDS), arc-based position generation |
+| `src/ship/mod.rs` | ShipState reassembles ship components for cross-cutting logic |
+| `src/ship/utility.rs` | Route scoring and utility calculations |
+| `src/ship/spawn.rs` | Ship spawning constants (NUM_SHIPS, STARTING_SIM_TICK) |
+| `src/simulation/` | Per-phase systems: economy, movement, friction, docking, fleet, route_history |
+| `src/rendering/` | Camera setup (camera.rs), island visuals (island_ui.rs), ship visuals (ship_ui.rs), selection highlights (selection.rs) |
+| `src/ui/` | HUD text panels (hud.rs), ship/island inspector panels (inspector.rs) |
+| `src/input.rs` | Keyboard, mouse, and scroll-wheel input handling |
+
+**Key design patterns:**
+
+- Commodities use fixed-size `[f32; 5]` arrays indexed by `Commodity::idx()`. Iterate with `Commodity::iter()` via strum.
+- `PriceLedger` (`Vec<PriceEntry>`) is indexed by island id, allocated at world-init with a fixed island count.
+- Ship data is decomposed into `ShipMovement`, `ShipTrading`, `ShipProfile`, and `ShipLedger` ECS components. `ShipState` temporarily reassembles them for methods needing cross-cutting access.
+- Island economy logic lives entirely in `IslandEconomy` methods, keeping it testable independent of Bevy.
+- Ship ledger merges are the only information propagation mechanism.
+
+## Key Constants
+
+- **World size:** 5000 x 5000 simulation units
+- **Islands:** 50 (defined in `src/island/spawn.rs`)
+- **Ships:** 100 (defined in `src/ship/spawn.rs`)
+- **Starting tick:** 500 (ships begin with pre-aged ledger data)
+- **Planning tuning defaults** (set in `main.rs`): global friction 1.0, info decay rate 0.003, market spread 0.10
+
+## Tech Stack
 
 - **Language:** Rust (edition 2021)
-- **Visualization/Input:** `macroquad`
-- **Randomization:** `rand`
-- **Parallelism:** `rayon` (island economy update phase)
-- **Enum utilities:** `strum` + `strum_macros`
-
-## Near-Term Roadmap
-
-- Improve trade sizing and utility scoring.
-- Extend parallel updates to additional phases where data dependencies allow.
+- **Engine:** Bevy 0.16 (ECS, rendering, input, windowing)
+- **Randomization:** `rand` 0.8
+- **Enum utilities:** `strum` + `strum_macros` 0.26
+- **Test framework:** `rstest` 0.26 (dev dependency)
