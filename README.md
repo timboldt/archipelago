@@ -3,6 +3,10 @@
 
 An archipelago economic simulation in Rust, built on **Bevy 0.16** ECS. Islands produce and consume goods, autonomous ship agents trade between them, and market information propagates only through local ship-island ledger merges (a gossip protocol) — there is no global broadcast.
 
+![Screenshot](assets/screenshot.png)
+
+[Screen Recording](assets/recording.mov)
+
 ## Current Status
 
 A working simulation with a phased ECS update loop:
