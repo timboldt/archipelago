@@ -20,7 +20,10 @@ At startup, ships begin docked at their home island and load cargo before their 
 
 ```sh
 cargo build
-cargo run
+cargo run                          # default: 50 islands + mainland
+cargo run -- --islands 100         # custom island count (scales map + fleet)
+cargo run -- --no-mainland         # disable the mainland island
+cargo run -- --islands 80 --no-mainland  # combine options
 cargo test
 ```
 
@@ -137,10 +140,10 @@ Selection is mutually exclusive: selecting a ship deselects the island and vice 
 | `src/components.rs` | All ECS components and shared types (Commodity, PriceEntry, PriceLedger, Inventory, ship components) |
 | `src/resources.rs` | All ECS resources (SimulationTick, TimeScale, PlanningTuningRes, ShipMeshes, etc.) |
 | `src/island/mod.rs` | IslandEconomy component with production/consumption/pricing logic |
-| `src/island/spawn.rs` | Island spawning, world constants (WORLD_SIZE, NUM_ISLANDS), arc-based position generation |
+| `src/island/spawn.rs` | Island spawning, arc-based position generation, mainland creation |
 | `src/ship/mod.rs` | ShipState reassembles ship components for cross-cutting logic |
 | `src/ship/utility.rs` | Route scoring and utility calculations |
-| `src/ship/spawn.rs` | Ship spawning constants (NUM_SHIPS, STARTING_SIM_TICK) |
+| `src/ship/spawn.rs` | Ship spawning (STARTING_SIM_TICK) |
 | `src/simulation/` | Per-phase systems: economy, movement, friction, docking, fleet, route_history |
 | `src/rendering/` | Camera setup (camera.rs), island visuals (island_ui.rs), ship visuals (ship_ui.rs), selection highlights (selection.rs) |
 | `src/ui/` | HUD text panels (hud.rs), ship/island inspector panels (inspector.rs) |
@@ -154,11 +157,12 @@ Selection is mutually exclusive: selecting a ship deselects the island and vice 
 - Island economy logic lives entirely in `IslandEconomy` methods, keeping it testable independent of Bevy.
 - Ship ledger merges are the only information propagation mechanism.
 
-## Key Constants
+## Key Constants & Configuration
 
-- **World size:** 5000 x 5000 simulation units
-- **Islands:** 50 (defined in `src/island/spawn.rs`)
-- **Ships:** 100 (defined in `src/ship/spawn.rs`)
+- **Islands:** 50 by default (configurable via `--islands N`); map size and fleet scale with island count
+- **World size:** 5000 × 5000 at 50 islands, scales as √(N/50) × 5000
+- **Ships:** 2× island count (initial fleet)
+- **Mainland:** enabled by default (`--no-mainland` to disable), placed 4000–6000 units from the nearest island in a random direction, economically equivalent to all archipelago islands combined, cannot produce spices
 - **Starting tick:** 500 (ships begin with pre-aged ledger data)
 - **Planning tuning defaults** (set in `main.rs`): global friction 1.0, info decay rate 0.003, market spread 0.10
 
@@ -167,5 +171,6 @@ Selection is mutually exclusive: selecting a ship deselects the island and vice 
 - **Language:** Rust (edition 2021)
 - **Engine:** Bevy 0.16 (ECS, rendering, input, windowing)
 - **Randomization:** `rand` 0.8
+- **CLI:** `clap` 4 (derive-based argument parsing)
 - **Enum utilities:** `strum` + `strum_macros` 0.26
 - **Test framework:** `rstest` 0.26 (dev dependency)

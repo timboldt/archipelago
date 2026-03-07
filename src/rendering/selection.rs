@@ -31,7 +31,7 @@ pub fn setup_selection_highlights(
         IslandSelectionHighlight,
         Mesh2d(island_mesh),
         MeshMaterial2d(island_material),
-        Transform::from_xyz(0.0, 0.0, -0.5),
+        Transform::from_xyz(0.0, 0.0, 0.5),
         Visibility::Hidden,
     ));
 }
@@ -70,7 +70,7 @@ pub fn update_selection_highlights(
         if let Ok(pos) = selected_island.single() {
             hl.translation.x = pos.0.x;
             hl.translation.y = pos.0.y;
-            hl.translation.z = -0.5;
+            hl.translation.z = 0.5;
             *vis = Visibility::Visible;
         } else {
             *vis = Visibility::Hidden;

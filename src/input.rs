@@ -5,8 +5,7 @@ use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 
 use crate::components::{IslandMarker, Position, SelectedIsland, SelectedShip, ShipMarker};
-use crate::island::spawn::WORLD_SIZE;
-use crate::resources::TimeScale;
+use crate::resources::{IslandPositions, TimeScale};
 
 /// Tracks mouse drag state for panning vs click detection.
 #[derive(Resource, Default)]
@@ -296,6 +295,7 @@ fn handle_time_scale_input(keys: Res<ButtonInput<KeyCode>>, mut time_scale: ResM
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_camera_input(
     keys: Res<ButtonInput<KeyCode>>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
@@ -304,6 +304,7 @@ fn handle_camera_input(
     mut drag_state: ResMut<DragState>,
     windows: Query<&Window>,
     mut camera_query: Query<(&mut Transform, &mut Projection), With<Camera2d>>,
+    island_positions: Res<IslandPositions>,
 ) {
     let Ok((mut transform, mut projection)) = camera_query.single_mut() else {
         return;
@@ -394,6 +395,25 @@ fn handle_camera_input(
 
     // ── Clamp ────────────────────────────────────────────────────────
     ortho.scale = ortho.scale.clamp(MIN_ZOOM, MAX_ZOOM);
-    transform.translation.x = transform.translation.x.clamp(0.0, WORLD_SIZE);
-    transform.translation.y = transform.translation.y.clamp(0.0, WORLD_SIZE);
+    let margin = 500.0;
+    let (mut min_x, mut min_y, mut max_x, mut max_y) = (
+        f32::INFINITY,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::NEG_INFINITY,
+    );
+    for p in &island_positions.0 {
+        min_x = min_x.min(p.x);
+        min_y = min_y.min(p.y);
+        max_x = max_x.max(p.x);
+        max_y = max_y.max(p.y);
+    }
+    transform.translation.x = transform
+        .translation
+        .x
+        .clamp(min_x - margin, max_x + margin);
+    transform.translation.y = transform
+        .translation
+        .y
+        .clamp(min_y - margin, max_y + margin);
 }

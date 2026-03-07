@@ -224,6 +224,10 @@ impl ShipState {
     pub fn archetype(&self) -> ShipArchetype {
         self.archetype
     }
+    pub fn set_archetype(&mut self, archetype: ShipArchetype) {
+        self.archetype = archetype;
+        self.recompute_operational_traits();
+    }
     pub fn docked_island(&self) -> Option<usize> {
         self.docked_at
     }

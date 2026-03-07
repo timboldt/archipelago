@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 bevy = { version = "0.16", features = ["dynamic_linking"] }
+clap = { version = "4", features = ["derive"] }
 rand = "0.8"
 strum = "0.26"
 strum_macros = "0.26"

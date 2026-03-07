@@ -4,6 +4,21 @@ use bevy::prelude::*;
 
 use crate::ship::PlanningTuning;
 
+/// World configuration derived from command-line arguments.
+#[derive(Resource, Clone)]
+pub struct WorldConfig {
+    /// Number of archipelago islands (excluding mainland).
+    pub num_islands: usize,
+    /// Width/height of the square archipelago area in world units.
+    pub world_size: f32,
+    /// Initial number of ships.
+    pub num_ships: usize,
+    /// Total island count including mainland (used for ledger sizing).
+    pub total_islands: usize,
+    /// Island ID of the mainland, if spawned.
+    pub mainland_island_id: Option<usize>,
+}
+
 /// Current simulation tick counter.
 #[derive(Resource)]
 pub struct SimulationTick(pub u64);

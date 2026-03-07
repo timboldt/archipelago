@@ -71,6 +71,10 @@ pub type PriceLedger = Vec<PriceEntry>;
 #[derive(Component)]
 pub struct IslandMarker;
 
+/// Marker component for the mainland island.
+#[derive(Component)]
+pub struct MainlandMarker;
+
 /// Stable index for ledger arrays.
 #[derive(Component, Clone, Copy, Debug)]
 pub struct IslandId(pub usize);

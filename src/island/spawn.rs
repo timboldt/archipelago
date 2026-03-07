@@ -4,21 +4,18 @@ use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use rand::Rng;
 
-use crate::components::{Commodity, IslandId, IslandMarker, MarketLedger, Position, PriceLedger};
+use crate::components::{
+    Commodity, IslandId, IslandMarker, MainlandMarker, MarketLedger, Position, PriceLedger,
+};
 use crate::island::IslandEconomy;
-use crate::resources::{IslandEntityMap, IslandPositions, RouteHistory};
+use crate::resources::{IslandEntityMap, IslandPositions, RouteHistory, WorldConfig};
 
-/// Width/height of the square simulation space in world units.
-pub const WORLD_SIZE: f32 = 5000.0;
 /// Buffer distance from world edge when placing islands.
 const ISLAND_SPAWN_MARGIN: f32 = 200.0;
 /// Minimum distance required between any two islands.
 const MIN_ISLAND_SPAWN_DISTANCE: f32 = 140.0;
 /// Maximum random placement retries before giving up on an island.
 const ISLAND_POSITION_ATTEMPTS: usize = 40;
-
-/// Total number of islands spawned in the world.
-pub const NUM_ISLANDS: usize = 50;
 
 /// Rolling window (in ticks) for tracking route congestion / recent departures.
 pub const ROUTE_HISTORY_WINDOW_TICKS: usize = 10;
@@ -75,20 +72,23 @@ fn make_island_mesh(rng: &mut impl Rng, scale: f32) -> Mesh {
 /// The arc sweeps a randomised portion of an ellipse. Islands are placed
 /// along the arc with uniform perpendicular scatter and a minimum-distance
 /// check.
-pub fn generate_arc_positions(rng: &mut impl Rng) -> Vec<Vec2> {
-    let center = Vec2::new(WORLD_SIZE * 0.5, WORLD_SIZE * 0.5);
+pub fn generate_arc_positions(rng: &mut impl Rng, config: &WorldConfig) -> Vec<Vec2> {
+    let world_size = config.world_size;
+    let num_islands = config.num_islands;
+
+    let center = Vec2::new(world_size * 0.5, world_size * 0.5);
     // Ellipse radii: one axis is fixed, the other varies for eccentricity.
-    let radius_a = WORLD_SIZE * 0.38;
-    let radius_b = WORLD_SIZE * rng.gen_range(0.2..0.38);
+    let radius_a = world_size * 0.38;
+    let radius_b = world_size * rng.gen_range(0.2..0.38);
     // Randomize arc length (150–240 degrees) and starting position.
     let arc_length: f32 = rng.gen_range(std::f32::consts::PI * 0.83..std::f32::consts::PI * 1.33);
     let arc_start: f32 = rng.gen_range(0.0..std::f32::consts::TAU);
     let arc_end: f32 = arc_start + arc_length;
     let arc_spread = 1200.0; // perpendicular scatter from the arc spine
 
-    let mut positions: Vec<Vec2> = Vec::with_capacity(NUM_ISLANDS);
+    let mut positions: Vec<Vec2> = Vec::with_capacity(num_islands);
 
-    for _ in 0..NUM_ISLANDS {
+    for _ in 0..num_islands {
         let mut best = Vec2::ZERO;
         let mut best_min_dist = -1.0_f32;
 
@@ -106,10 +106,10 @@ pub fn generate_arc_positions(rng: &mut impl Rng) -> Vec<Vec2> {
             let candidate = Vec2::new(
                 candidate
                     .x
-                    .clamp(ISLAND_SPAWN_MARGIN, WORLD_SIZE - ISLAND_SPAWN_MARGIN),
+                    .clamp(ISLAND_SPAWN_MARGIN, world_size - ISLAND_SPAWN_MARGIN),
                 candidate
                     .y
-                    .clamp(ISLAND_SPAWN_MARGIN, WORLD_SIZE - ISLAND_SPAWN_MARGIN),
+                    .clamp(ISLAND_SPAWN_MARGIN, world_size - ISLAND_SPAWN_MARGIN),
             );
 
             let min_dist = positions
@@ -171,15 +171,17 @@ pub fn spawn_islands(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<ColorMaterial>,
     rng: &mut impl Rng,
+    config: &WorldConfig,
 ) -> Vec<(Vec2, IslandEconomy, PriceLedger)> {
-    let island_positions = generate_arc_positions(rng);
+    let total_islands = config.total_islands;
+    let island_positions = generate_arc_positions(rng, config);
 
-    let mut entity_map = Vec::with_capacity(NUM_ISLANDS);
-    let mut cached_positions = Vec::with_capacity(NUM_ISLANDS);
+    let mut entity_map = Vec::with_capacity(total_islands);
+    let mut cached_positions = Vec::with_capacity(total_islands);
     let mut island_seed_data: Vec<(Vec2, IslandEconomy, PriceLedger)> = Vec::new();
 
     for (id, pos) in island_positions.iter().enumerate() {
-        let (economy, ledger) = IslandEconomy::new(id, NUM_ISLANDS, rng);
+        let (economy, ledger) = IslandEconomy::new(id, total_islands, rng);
 
         // Scale the island visual by population_capacity relative to a
         // typical mid-range island (~100 pop capacity).
@@ -209,16 +211,128 @@ pub fn spawn_islands(
         cached_positions.push(*pos);
     }
 
+    // Spawn mainland if enabled.
+    if let Some(mainland_id) = config.mainland_island_id {
+        let (mainland_economy, mainland_ledger, mainland_pos) =
+            create_mainland(mainland_id, total_islands, config, &island_positions, rng);
+
+        let scale = (mainland_economy.population_capacity / 20.0)
+            .sqrt()
+            .clamp(0.5, 5.0);
+        let mesh = meshes.add(make_island_mesh(rng, scale));
+        // Mainland gets a distinct brownish color.
+        let v = rng.gen_range(-0.02_f32..0.02);
+        let material = materials.add(Color::srgb(0.55 + v, 0.45 + v, 0.30 + v));
+
+        island_seed_data.push((
+            mainland_pos,
+            IslandEconomy::clone_for_seeding(&mainland_economy),
+            mainland_ledger.clone(),
+        ));
+
+        let entity = commands
+            .spawn((
+                IslandMarker,
+                MainlandMarker,
+                IslandId(mainland_id),
+                mainland_economy,
+                MarketLedger(mainland_ledger),
+                Position(mainland_pos),
+                Mesh2d(mesh),
+                MeshMaterial2d(material),
+                Transform::from_translation(mainland_pos.extend(0.0)),
+            ))
+            .id();
+        entity_map.push(entity);
+        cached_positions.push(mainland_pos);
+    }
+
     commands.insert_resource(IslandEntityMap(entity_map));
     commands.insert_resource(IslandPositions(cached_positions));
     commands.insert_resource(RouteHistory {
-        recent_route_departures: vec![vec![0.0; NUM_ISLANDS]; NUM_ISLANDS],
+        recent_route_departures: vec![vec![0.0; total_islands]; total_islands],
         route_departure_history: vec![
-            vec![vec![0; NUM_ISLANDS]; NUM_ISLANDS];
+            vec![vec![0; total_islands]; total_islands];
             ROUTE_HISTORY_WINDOW_TICKS
         ],
         cursor: 0,
     });
 
     island_seed_data
+}
+
+/// Create a mainland island economy — as large as all archipelago islands combined,
+/// no specialization, cannot produce spices.
+fn create_mainland(
+    id: usize,
+    total_islands: usize,
+    config: &WorldConfig,
+    island_positions: &[Vec2],
+    rng: &mut impl Rng,
+) -> (IslandEconomy, PriceLedger, Vec2) {
+    let n = config.num_islands as f32;
+
+    // Pick a random direction, find the outermost island in that direction,
+    // then place mainland 4000-6000 units beyond it.
+    let archipelago_center = island_positions.iter().copied().sum::<Vec2>() / n;
+    let angle: f32 = rng.gen_range(0.0..std::f32::consts::TAU);
+    let direction = Vec2::new(angle.cos(), angle.sin());
+
+    // Find the island farthest along the chosen direction (highest dot product).
+    let edge_island = island_positions
+        .iter()
+        .copied()
+        .max_by(|a, b| {
+            let da = (*a - archipelago_center).dot(direction);
+            let db = (*b - archipelago_center).dot(direction);
+            da.partial_cmp(&db).unwrap()
+        })
+        .unwrap();
+
+    // Place the mainland 4000-6000 units from that edge island.
+    let target_dist: f32 = rng.gen_range(4000.0..6000.0);
+    let pos = edge_island + direction * target_dist;
+
+    // Create a normal island economy, then scale it up.
+    let (mut economy, ledger) = IslandEconomy::new(id, total_islands, rng);
+
+    // Scale economy to be roughly equivalent to all other islands combined.
+    // Balanced production (no specialization focus), no spices.
+    economy.production_rates = [
+        rng.gen_range(1.2..2.0) * n, // Grain
+        rng.gen_range(0.8..1.5) * n, // Timber
+        rng.gen_range(0.6..1.2) * n, // Iron
+        0.0,                         // Tools (fabricated, not produced)
+        0.0,                         // Spices — mainland cannot make spices
+    ];
+    economy.consumption_rates = [
+        rng.gen_range(1.0..1.8) * n,   // Grain
+        rng.gen_range(0.15..0.3) * n,  // Timber
+        rng.gen_range(0.15..0.3) * n,  // Iron
+        rng.gen_range(0.2..0.4) * n,   // Tools
+        rng.gen_range(0.06..0.12) * n, // Spices — it consumes spices but can't make them
+    ];
+
+    // Scale capacities and population to match combined archipelago.
+    let size_factor = n;
+    economy.population = 80.0 * n;
+    economy.population_capacity = 160.0 * n;
+    economy.cash = 1500.0 * n;
+    economy.infrastructure_level = 1.5;
+    economy.infrastructure_capacity = 3.5;
+    economy.infra_credit = 1500.0 * n;
+
+    use crate::components::{Commodity as C, INVENTORY_CARRYING_CAPACITY};
+    use strum::IntoEnumIterator;
+    for c in C::iter() {
+        let idx = c.idx();
+        economy.resource_capacity[idx] = INVENTORY_CARRYING_CAPACITY * size_factor * 1.0;
+        economy.inventory[idx] = economy.resource_capacity[idx] * 0.5;
+    }
+
+    // Reset labor allocation for the new production rates.
+    economy.labor_allocation =
+        IslandEconomy::initial_labor_allocation_for(&economy.production_rates);
+
+    (economy, ledger, pos)
 }

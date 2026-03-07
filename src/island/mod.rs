@@ -252,7 +252,7 @@ impl IslandEconomy {
             population_capacity,
             infrastructure_capacity,
             local_prices: [0.0; COMMODITY_COUNT],
-            labor_allocation: Self::initial_labor_allocation(&production_rates),
+            labor_allocation: Self::initial_labor_allocation_for(&production_rates),
             spice_morale_bonus: 1.0,
             last_trade_tick: 0,
         };
@@ -274,7 +274,7 @@ impl IslandEconomy {
     }
 
     /// Computes an initial (non-smoothed) labor allocation from production rates.
-    fn initial_labor_allocation(
+    pub fn initial_labor_allocation_for(
         production_rates: &[f32; COMMODITY_COUNT],
     ) -> [f32; COMMODITY_COUNT] {
         let mut alloc = [0.0_f32; COMMODITY_COUNT];
@@ -741,7 +741,7 @@ mod tests {
         e.inventory = [50.0, 50.0, 50.0, 50.0, 50.0];
         e.production_rates = [1.5, 1.0, 0.8, 0.0, 0.3];
         e.consumption_rates = [1.0, 0.2, 0.2, 0.2, 0.1];
-        e.labor_allocation = IslandEconomy::initial_labor_allocation(&e.production_rates);
+        e.labor_allocation = IslandEconomy::initial_labor_allocation_for(&e.production_rates);
         e.spice_morale_bonus = 1.0;
         (e, ledger)
     }

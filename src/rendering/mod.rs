@@ -13,7 +13,7 @@ impl Plugin for RenderingPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Startup,
-            (camera::setup_camera, selection::setup_selection_highlights),
+            (camera::setup_camera, selection::setup_selection_highlights).after(crate::SetupWorld),
         );
         app.add_systems(
             Update,

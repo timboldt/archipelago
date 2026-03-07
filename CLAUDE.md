@@ -48,9 +48,9 @@ The codebase now uses **Bevy 0.16** ECS throughout.
 - Island economy logic lives entirely in `IslandEconomy` methods, keeping it testable independent of Bevy.
 - Ship ledger merges are the **only** information propagation mechanism — no global broadcast.
 
-## Key Constants
+## Key Constants & Configuration
 
-World size, island/ship counts, and starting tick are defined in `src/island/spawn.rs` and `src/ship/spawn.rs`. Planning tuning defaults (friction, decay, spread) are set in `main.rs`.
+Island count, map size, and fleet size are configurable via CLI (`--islands N`, `--no-mainland`). The `WorldConfig` resource (built in `main.rs` from CLI args) holds these values. Defaults: 50 islands, 5000×5000 world, 100 ships, mainland enabled. Map and fleet scale with √(N/50). The mainland is a large island placed 4000–6000 units from the nearest archipelago island in a random direction; it cannot produce spices. Pass `--no-mainland` to disable it. Planning tuning defaults (friction, decay, spread) are set in `main.rs`.
 
 ## Runtime Controls
 
