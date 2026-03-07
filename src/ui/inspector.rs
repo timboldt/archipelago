@@ -48,7 +48,7 @@ pub fn update_ship_inspector(
         node.display = Display::None;
         return;
     };
-    node.display = Display::DEFAULT;
+    node.display = Display::Flex;
 
     let archetype_label = match profile.archetype {
         ShipArchetype::Clipper => "Clipper",
@@ -113,7 +113,7 @@ pub fn update_ship_inspector(
     s.push_str(&format!("  {}\n", cargo_text));
     s.push_str("  [ / ]: Prev / Next ship\n");
 
-    **text = s;
+    text.0 = s;
 }
 
 pub fn update_island_inspector(
@@ -150,7 +150,7 @@ pub fn update_island_inspector(
         node.display = Display::None;
         return;
     };
-    node.display = Display::DEFAULT;
+    node.display = Display::Flex;
 
     let mut s = String::new();
     s.push_str("Selected Island\n");
@@ -192,5 +192,5 @@ pub fn update_island_inspector(
     ));
     s.push_str("  { / }: Prev / Next island\n");
 
-    **text = s;
+    text.0 = s;
 }

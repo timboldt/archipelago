@@ -33,7 +33,8 @@ pub fn spawn_ships(
         let mut ship = ShipState::new(start_pos, speed, NUM_ISLANDS, start_island_id);
         ship.seed_initial_market_view(island_seed_data, STARTING_SIM_TICK, start_island_id, rng);
 
-        let (movement, trading, profile, ship_ledger) = ship.into_components();
+        let (movement, trading, mut profile, ship_ledger) = ship.into_components();
+        profile.home_island_id = Some(start_island_id);
         let mesh = match profile.archetype {
             ShipArchetype::Clipper => clipper_mesh.clone(),
             ShipArchetype::Freighter => freighter_mesh.clone(),

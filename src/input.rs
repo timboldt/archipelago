@@ -311,7 +311,9 @@ fn handle_camera_input(
     };
 
     let dt = time.delta_secs();
-    let window = windows.single().unwrap();
+    let Ok(window) = windows.single() else {
+        return;
+    };
     let wpp = world_units_per_pixel(ortho, window);
 
     // ── Mouse drag panning ───────────────────────────────────────────

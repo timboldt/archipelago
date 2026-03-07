@@ -126,5 +126,5 @@ pub fn update_hud(
     // hud_text.push_str(&format!("  Friction: {:.2}\n", frame_timings.friction_ms));
     hud_text.push_str(&format!("  Total: {:.2}\n", frame_timings.total_ms));
 
-    **text = hud_text;
+    text.0 = hud_text;
 }

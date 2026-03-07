@@ -1,6 +1,7 @@
 //! Docking-phase processing — exclusive system for cross-entity mutation.
 
 use bevy::prelude::*;
+use std::collections::HashSet;
 use std::time::Instant;
 
 use crate::components::{
@@ -80,7 +81,7 @@ pub fn process_docked_ships(world: &mut World) {
     }
 
     let mut all_departure_targets: Vec<(usize, usize)> = Vec::new();
-    let mut bankrupt_entities: Vec<Entity> = Vec::new();
+    let mut bankrupt_entities: HashSet<Entity> = HashSet::new();
 
     let route_departures_clone: Vec<Vec<f32>> = world
         .resource::<RouteHistory>()
@@ -174,7 +175,7 @@ pub fn process_docked_ships(world: &mut World) {
             if ship.is_bankrupt() {
                 island_economy.apply_ship_bankruptcy_settlement(ship.removal_cash_settlement());
                 bankrupt_local[local_idx] = true;
-                bankrupt_entities.push(ship_entities_local[local_idx]);
+                bankrupt_entities.insert(ship_entities_local[local_idx]);
             }
         }
 

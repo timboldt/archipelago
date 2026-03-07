@@ -52,7 +52,7 @@ pub fn update_legend(
         node.display = Display::None;
         return;
     }
-    node.display = Display::DEFAULT;
+    node.display = Display::Flex;
 
     let mut s = String::new();
 
@@ -78,5 +78,5 @@ pub fn update_legend(
 
     s.push_str("\n[L] Toggle legend");
 
-    **text = s;
+    text.0 = s;
 }

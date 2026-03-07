@@ -33,7 +33,7 @@ The project is migrating from macroquad to **Bevy 0.16** ECS (current branch: `b
 **Module layout:**
 
 - `src/components.rs` — all ECS components and shared types (`Commodity`, `PriceEntry`, `PriceLedger`, `Inventory`, ship components)
-- `src/resources.rs` — all ECS resources (`SimulationTick`, `TimeScale`, `PlanningTuningRes`, `SelectionState`, etc.)
+- `src/resources.rs` — all ECS resources (`SimulationTick`, `TimeScale`, `PlanningTuningRes`, etc.)
 - `src/island/` — `IslandEconomy` component with production/consumption/pricing logic; `spawn.rs` for constants
 - `src/ship/` — `ShipState` reassembles ship components for cross-cutting logic; `utility.rs` for route scoring; `spawn.rs` for constants
 - `src/simulation/` — per-phase systems: `economy.rs`, `movement.rs`, `friction.rs`, `docking.rs`, `fleet.rs`, `route_history.rs`
