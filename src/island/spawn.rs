@@ -1,6 +1,7 @@
 //! Island entity spawning.
 
 use bevy::prelude::*;
+use rand::Rng;
 
 use crate::components::{IslandId, IslandMarker, MarketLedger, Position};
 use crate::island::IslandEconomy;
@@ -16,46 +17,76 @@ pub const NUM_ISLANDS: usize = 50;
 
 pub const ROUTE_HISTORY_WINDOW_TICKS: usize = 10;
 
+/// Generate island positions along a Caribbean-style arc with scatter.
+///
+/// The arc sweeps from the upper-left to the lower-right of the world,
+/// curving like the Lesser Antilles chain. Islands are placed along the
+/// arc with random perpendicular scatter and a minimum-distance check.
+pub fn generate_arc_positions(rng: &mut impl Rng) -> Vec<Vec2> {
+    let center = Vec2::new(WORLD_SIZE * 0.5, WORLD_SIZE * 0.5);
+    // Ellipse radii: one axis is fixed, the other varies for eccentricity.
+    let radius_a = WORLD_SIZE * 0.38;
+    let radius_b = WORLD_SIZE * rng.gen_range(0.2..0.38);
+    // Randomize arc length (150–240 degrees) and starting position.
+    let arc_length: f32 = rng.gen_range(std::f32::consts::PI * 0.83..std::f32::consts::PI * 1.33);
+    let arc_start: f32 = rng.gen_range(0.0..std::f32::consts::TAU);
+    let arc_end: f32 = arc_start + arc_length;
+    let arc_spread = 1200.0; // perpendicular scatter from the arc spine
+
+    let mut positions: Vec<Vec2> = Vec::with_capacity(NUM_ISLANDS);
+
+    for _ in 0..NUM_ISLANDS {
+        let mut best = Vec2::ZERO;
+        let mut best_min_dist = -1.0_f32;
+
+        for _ in 0..ISLAND_POSITION_ATTEMPTS {
+            // Pick a random angle along the arc.
+            let t: f32 = rng.gen_range(arc_start..arc_end);
+            // Base point on the arc.
+            let spine = center + Vec2::new(t.cos() * radius_a, t.sin() * radius_b);
+            // Uniform scatter perpendicular to the arc.
+            let offset = rng.gen_range(-arc_spread..arc_spread);
+            let tangent = Vec2::new(-t.sin(), t.cos());
+            let candidate = spine + tangent * offset;
+
+            // Clamp inside world margins.
+            let candidate = Vec2::new(
+                candidate
+                    .x
+                    .clamp(ISLAND_SPAWN_MARGIN, WORLD_SIZE - ISLAND_SPAWN_MARGIN),
+                candidate
+                    .y
+                    .clamp(ISLAND_SPAWN_MARGIN, WORLD_SIZE - ISLAND_SPAWN_MARGIN),
+            );
+
+            let min_dist = positions
+                .iter()
+                .map(|p| candidate.distance(*p))
+                .fold(f32::INFINITY, f32::min);
+
+            if min_dist >= MIN_ISLAND_SPAWN_DISTANCE {
+                best = candidate;
+                best_min_dist = min_dist;
+                break;
+            }
+            if min_dist > best_min_dist {
+                best_min_dist = min_dist;
+                best = candidate;
+            }
+        }
+
+        let _ = best_min_dist; // suppress unused warning
+        positions.push(best);
+    }
+
+    positions
+}
+
 #[allow(dead_code)]
 pub fn spawn_islands(commands: &mut Commands) {
     let mut rng = ::rand::thread_rng();
 
-    let mut island_positions: Vec<Vec2> = Vec::with_capacity(NUM_ISLANDS);
-    for _ in 0..NUM_ISLANDS {
-        let mut best_candidate = Vec2::new(
-            rng.gen_range(ISLAND_SPAWN_MARGIN..WORLD_SIZE - ISLAND_SPAWN_MARGIN),
-            rng.gen_range(ISLAND_SPAWN_MARGIN..WORLD_SIZE - ISLAND_SPAWN_MARGIN),
-        );
-        let mut best_min_distance = island_positions
-            .iter()
-            .map(|existing| best_candidate.distance(*existing))
-            .fold(f32::INFINITY, f32::min);
-
-        for _ in 0..ISLAND_POSITION_ATTEMPTS {
-            let candidate = Vec2::new(
-                rng.gen_range(ISLAND_SPAWN_MARGIN..WORLD_SIZE - ISLAND_SPAWN_MARGIN),
-                rng.gen_range(ISLAND_SPAWN_MARGIN..WORLD_SIZE - ISLAND_SPAWN_MARGIN),
-            );
-            let min_distance = island_positions
-                .iter()
-                .map(|existing| candidate.distance(*existing))
-                .fold(f32::INFINITY, f32::min);
-
-            if min_distance >= MIN_ISLAND_SPAWN_DISTANCE {
-                best_candidate = candidate;
-                break;
-            }
-
-            if min_distance > best_min_distance {
-                best_min_distance = min_distance;
-                best_candidate = candidate;
-            }
-        }
-
-        island_positions.push(best_candidate);
-    }
-
-    use ::rand::Rng;
+    let island_positions = generate_arc_positions(&mut rng);
 
     let mut entity_map = Vec::with_capacity(NUM_ISLANDS);
     let mut cached_positions = Vec::with_capacity(NUM_ISLANDS);

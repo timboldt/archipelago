@@ -15,7 +15,7 @@ use bevy::prelude::*;
 use components::{
     IslandId, IslandMarker, MarketLedger, Position, PriceLedger, ShipArchetype, ShipMarker,
 };
-use island::spawn::{NUM_ISLANDS, ROUTE_HISTORY_WINDOW_TICKS, WORLD_SIZE};
+use island::spawn::{NUM_ISLANDS, ROUTE_HISTORY_WINDOW_TICKS};
 use resources::*;
 use ship::spawn::{NUM_SHIPS, STARTING_SIM_TICK};
 use ship::{PlanningTuning, ShipState};
@@ -67,39 +67,8 @@ fn setup_world(
     let shorthaul_mesh = meshes.add(Circle::new(4.0));
     let ship_material = materials.add(Color::srgb(0.9, 0.9, 0.9));
 
-    // Generate island positions with spacing constraints.
-    let mut island_positions: Vec<Vec2> = Vec::with_capacity(NUM_ISLANDS);
-    for _ in 0..NUM_ISLANDS {
-        let mut best_candidate = Vec2::new(
-            rng.gen_range(200.0..WORLD_SIZE - 200.0),
-            rng.gen_range(200.0..WORLD_SIZE - 200.0),
-        );
-        let mut best_min_distance = island_positions
-            .iter()
-            .map(|existing| best_candidate.distance(*existing))
-            .fold(f32::INFINITY, f32::min);
-
-        for _ in 0..40 {
-            let candidate = Vec2::new(
-                rng.gen_range(200.0..WORLD_SIZE - 200.0),
-                rng.gen_range(200.0..WORLD_SIZE - 200.0),
-            );
-            let min_distance = island_positions
-                .iter()
-                .map(|existing| candidate.distance(*existing))
-                .fold(f32::INFINITY, f32::min);
-
-            if min_distance >= 140.0 {
-                best_candidate = candidate;
-                break;
-            }
-            if min_distance > best_min_distance {
-                best_min_distance = min_distance;
-                best_candidate = candidate;
-            }
-        }
-        island_positions.push(best_candidate);
-    }
+    // Generate island positions along a Caribbean-style arc.
+    let island_positions = island::spawn::generate_arc_positions(&mut rng);
 
     // Create island entities and collect data for ship seeding.
     let mut entity_map = Vec::with_capacity(NUM_ISLANDS);
