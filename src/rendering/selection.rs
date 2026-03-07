@@ -14,10 +14,10 @@ pub fn setup_selection_highlights(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<bevy::sprite::ColorMaterial>>,
 ) {
-    let ship_mesh = meshes.add(Circle::new(14.0));
-    let island_mesh = meshes.add(Circle::new(22.0));
-    let ship_material = materials.add(Color::srgba(1.0, 1.0, 0.0, 0.5));
-    let island_material = materials.add(Color::srgba(0.0, 1.0, 1.0, 0.5));
+    let ship_mesh = meshes.add(Annulus::new(12.0, 15.0));
+    let island_mesh = meshes.add(Annulus::new(19.0, 24.0));
+    let ship_material = materials.add(Color::srgb(1.0, 0.0, 0.0));
+    let island_material = materials.add(Color::srgb(1.0, 0.0, 0.0));
 
     commands.spawn((
         ShipSelectionHighlight,

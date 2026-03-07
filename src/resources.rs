@@ -1,7 +1,6 @@
 //! All Bevy Resource definitions for the Archipelago simulation.
 
 use bevy::prelude::*;
-use bevy::sprite::ColorMaterial;
 
 use crate::ship::PlanningTuning;
 
@@ -53,11 +52,10 @@ pub struct FrameTimingsRes {
 
 pub const PERF_HUD_UPDATE_INTERVAL_SECS: f32 = 1.0;
 
-/// Pre-created mesh/material handles for spawning ships at runtime.
+/// Pre-created mesh handles for spawning ships at runtime.
 #[derive(Resource)]
 pub struct ShipMeshes {
     pub clipper: Handle<Mesh>,
     pub freighter: Handle<Mesh>,
     pub shorthaul: Handle<Mesh>,
-    pub material: Handle<ColorMaterial>,
 }

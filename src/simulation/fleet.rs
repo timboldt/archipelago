@@ -122,12 +122,11 @@ pub fn evolve_fleet(world: &mut World) {
         world.despawn(entity);
     }
 
-    // Spawn daughters.
+    // Spawn daughters — each gets its own material for cargo coloring.
     let ship_meshes = world.resource::<ShipMeshes>();
     let clipper_mesh = ship_meshes.clipper.clone();
     let freighter_mesh = ship_meshes.freighter.clone();
     let shorthaul_mesh = ship_meshes.shorthaul.clone();
-    let ship_material = ship_meshes.material.clone();
 
     for daughter in daughters {
         let daughter_pos = daughter.pos();
@@ -137,6 +136,9 @@ pub fn evolve_fleet(world: &mut World) {
             ShipArchetype::Freighter => freighter_mesh.clone(),
             ShipArchetype::Shorthaul => shorthaul_mesh.clone(),
         };
+        let material = world
+            .resource_mut::<Assets<ColorMaterial>>()
+            .add(Color::srgb(0.9, 0.9, 0.9));
         world.spawn((
             ShipMarker,
             Position(daughter_pos),
@@ -145,7 +147,7 @@ pub fn evolve_fleet(world: &mut World) {
             profile,
             ship_ledger,
             Mesh2d(mesh),
-            MeshMaterial2d(ship_material.clone()),
+            MeshMaterial2d(material),
             Transform::from_translation(daughter_pos.extend(1.0)),
         ));
     }

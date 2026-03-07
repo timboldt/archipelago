@@ -53,33 +53,30 @@ fn setup_world(
     let mut rng = ::rand::thread_rng();
 
     // Pre-create shared meshes.
-    let island_mesh = meshes.add(Circle::new(12.0));
     let island_material = materials.add(Color::srgb(0.2, 0.8, 0.3));
     let clipper_mesh = meshes.add(RegularPolygon::new(6.0, 3));
     let freighter_mesh = meshes.add(Rectangle::new(10.0, 6.0));
     let shorthaul_mesh = meshes.add(Circle::new(4.0));
-    let ship_material = materials.add(Color::srgb(0.9, 0.9, 0.9));
 
-    // Spawn islands.
+    // Spawn islands (each gets a unique random polygon mesh).
     let island_seed_data =
-        island::spawn::spawn_islands(&mut commands, &mut rng, island_mesh, island_material);
+        island::spawn::spawn_islands(&mut commands, &mut meshes, &mut rng, island_material);
 
     // Store ship mesh handles for runtime spawning (fleet evolution).
     commands.insert_resource(ShipMeshes {
         clipper: clipper_mesh.clone(),
         freighter: freighter_mesh.clone(),
         shorthaul: shorthaul_mesh.clone(),
-        material: ship_material.clone(),
     });
 
-    // Spawn ships.
+    // Spawn ships (each gets its own material for per-ship cargo coloring).
     ship::spawn::spawn_ships(
         &mut commands,
+        &mut materials,
         &mut rng,
         &island_seed_data,
         clipper_mesh,
         freighter_mesh,
         shorthaul_mesh,
-        ship_material,
     );
 }

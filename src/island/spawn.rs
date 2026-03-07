@@ -1,6 +1,7 @@
 //! Island entity spawning.
 
 use bevy::prelude::*;
+use bevy::render::mesh::{Indices, PrimitiveTopology};
 use rand::Rng;
 
 use crate::components::{IslandId, IslandMarker, MarketLedger, Position, PriceLedger};
@@ -16,6 +17,53 @@ const ISLAND_POSITION_ATTEMPTS: usize = 40;
 pub const NUM_ISLANDS: usize = 50;
 
 pub const ROUTE_HISTORY_WINDOW_TICKS: usize = 10;
+
+/// Base visual radius for an island with average capacity.
+const BASE_ISLAND_RADIUS: f32 = 12.0;
+/// Number of vertices around the island polygon.
+const ISLAND_POLYGON_VERTS: usize = 8;
+/// How much each vertex radius can deviate (fraction of base radius).
+const ISLAND_JAGGEDNESS: f32 = 0.35;
+
+/// Generate a random irregular polygon mesh for an island.
+///
+/// `scale` controls overall size (1.0 = average). Vertices are perturbed
+/// radially to create a natural coastline shape.
+fn make_island_mesh(rng: &mut impl Rng, scale: f32) -> Mesh {
+    let radius = BASE_ISLAND_RADIUS * scale;
+    let n = ISLAND_POLYGON_VERTS;
+
+    let mut positions: Vec<[f32; 3]> = Vec::with_capacity(n + 1);
+    let mut normals: Vec<[f32; 3]> = Vec::with_capacity(n + 1);
+    let mut uvs: Vec<[f32; 2]> = Vec::with_capacity(n + 1);
+
+    // Center vertex.
+    positions.push([0.0, 0.0, 0.0]);
+    normals.push([0.0, 0.0, 1.0]);
+    uvs.push([0.5, 0.5]);
+
+    for i in 0..n {
+        let angle = std::f32::consts::TAU * (i as f32) / (n as f32);
+        let r = radius * (1.0 + rng.gen_range(-ISLAND_JAGGEDNESS..ISLAND_JAGGEDNESS));
+        positions.push([angle.cos() * r, angle.sin() * r, 0.0]);
+        normals.push([0.0, 0.0, 1.0]);
+        uvs.push([0.5 + angle.cos() * 0.5, 0.5 + angle.sin() * 0.5]);
+    }
+
+    // Triangle fan from center.
+    let mut indices: Vec<u32> = Vec::with_capacity(n * 3);
+    for i in 0..n {
+        indices.push(0);
+        indices.push((i + 1) as u32);
+        indices.push(((i + 1) % n + 1) as u32);
+    }
+
+    Mesh::new(PrimitiveTopology::TriangleList, Default::default())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+        .with_inserted_indices(Indices::U32(indices))
+}
 
 /// Generate island positions along a Caribbean-style arc with scatter.
 ///
@@ -88,8 +136,8 @@ pub fn generate_arc_positions(rng: &mut impl Rng) -> Vec<Vec2> {
 /// needed by ship spawning to seed initial market views.
 pub fn spawn_islands(
     commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
     rng: &mut impl Rng,
-    island_mesh: Handle<Mesh>,
     island_material: Handle<ColorMaterial>,
 ) -> Vec<(Vec2, IslandEconomy, PriceLedger)> {
     let island_positions = generate_arc_positions(rng);
@@ -100,6 +148,11 @@ pub fn spawn_islands(
 
     for (id, pos) in island_positions.iter().enumerate() {
         let (economy, ledger) = IslandEconomy::new(id, NUM_ISLANDS, rng);
+
+        // Scale the island visual by population_capacity relative to a
+        // typical mid-range island (~100 pop capacity).
+        let scale = (economy.population_capacity / 100.0).sqrt().clamp(0.5, 2.5);
+        let mesh = meshes.add(make_island_mesh(rng, scale));
 
         island_seed_data.push((
             *pos,
@@ -114,7 +167,7 @@ pub fn spawn_islands(
                 economy,
                 MarketLedger(ledger),
                 Position(*pos),
-                Mesh2d(island_mesh.clone()),
+                Mesh2d(mesh),
                 MeshMaterial2d(island_material.clone()),
                 Transform::from_translation(pos.extend(0.0)),
             ))
