@@ -190,6 +190,10 @@ impl IslandEconomy {
     }
 }
 
+/// Stores the original spawn color so it can be restored when overlay is deactivated.
+#[derive(Component)]
+pub struct IslandBaseColor(pub Color);
+
 pub fn bid_multiplier(market_spread: f32) -> f32 {
     (1.0 - market_spread.clamp(0.0, 1.8) * 0.5).max(0.05)
 }

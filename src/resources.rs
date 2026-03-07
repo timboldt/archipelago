@@ -74,3 +74,17 @@ pub struct ShipMeshes {
     pub freighter: Handle<Mesh>,
     pub shorthaul: Handle<Mesh>,
 }
+
+/// Which heatmap overlay is active (if any).
+#[derive(Clone, Copy, Debug)]
+pub enum HeatmapMode {
+    Commodity(crate::components::Commodity),
+    CashPerCapita,
+    Population,
+    Infrastructure,
+    ShipWealth,
+}
+
+/// Active heatmap overlay (None = original colors).
+#[derive(Resource, Default)]
+pub struct HeatmapOverlay(pub Option<HeatmapMode>);

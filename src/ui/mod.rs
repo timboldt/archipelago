@@ -16,6 +16,7 @@ impl Plugin for UiPlugin {
             Update,
             (
                 hud::update_hud,
+                hud::update_overlay_label,
                 inspector::update_ship_inspector,
                 inspector::update_island_inspector,
                 legend::toggle_legend,

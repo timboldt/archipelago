@@ -5,7 +5,8 @@ use bevy::render::mesh::{Indices, PrimitiveTopology};
 use rand::Rng;
 
 use crate::components::{
-    Commodity, IslandId, IslandMarker, MainlandMarker, MarketLedger, Position, PriceLedger,
+    Commodity, IslandBaseColor, IslandId, IslandMarker, MainlandMarker, MarketLedger, Position,
+    PriceLedger,
 };
 use crate::island::IslandEconomy;
 use crate::resources::{IslandEntityMap, IslandPositions, RouteHistory, WorldConfig};
@@ -187,7 +188,8 @@ pub fn spawn_islands(
         // typical mid-range island (~100 pop capacity).
         let scale = (economy.population_capacity / 100.0).sqrt().clamp(0.5, 2.5);
         let mesh = meshes.add(make_island_mesh(rng, scale));
-        let material = materials.add(island_color(&economy, rng));
+        let color = island_color(&economy, rng);
+        let material = materials.add(color);
 
         island_seed_data.push((
             *pos,
@@ -202,6 +204,7 @@ pub fn spawn_islands(
                 economy,
                 MarketLedger(ledger),
                 Position(*pos),
+                IslandBaseColor(color),
                 Mesh2d(mesh),
                 MeshMaterial2d(material),
                 Transform::from_translation(pos.extend(0.0)),
@@ -222,7 +225,8 @@ pub fn spawn_islands(
         let mesh = meshes.add(make_island_mesh(rng, scale));
         // Mainland gets a distinct brownish color.
         let v = rng.gen_range(-0.02_f32..0.02);
-        let material = materials.add(Color::srgb(0.55 + v, 0.45 + v, 0.30 + v));
+        let mainland_color = Color::srgb(0.55 + v, 0.45 + v, 0.30 + v);
+        let material = materials.add(mainland_color);
 
         island_seed_data.push((
             mainland_pos,
@@ -238,6 +242,7 @@ pub fn spawn_islands(
                 mainland_economy,
                 MarketLedger(mainland_ledger),
                 Position(mainland_pos),
+                IslandBaseColor(mainland_color),
                 Mesh2d(mesh),
                 MeshMaterial2d(material),
                 Transform::from_translation(mainland_pos.extend(0.0)),
@@ -273,7 +278,7 @@ fn create_mainland(
     let n = config.num_islands as f32;
 
     // Pick a random direction, find the outermost island in that direction,
-    // then place mainland 4000-6000 units beyond it.
+    // then place mainland 2000-3000 units beyond it.
     let archipelago_center = island_positions.iter().copied().sum::<Vec2>() / n;
     let angle: f32 = rng.gen_range(0.0..std::f32::consts::TAU);
     let direction = Vec2::new(angle.cos(), angle.sin());
@@ -289,8 +294,8 @@ fn create_mainland(
         })
         .unwrap();
 
-    // Place the mainland 4000-6000 units from that edge island.
-    let target_dist: f32 = rng.gen_range(4000.0..6000.0);
+    // Place the mainland 2000-3000 units from that edge island.
+    let target_dist: f32 = rng.gen_range(2000.0..3000.0);
     let pos = edge_island + direction * target_dist;
 
     // Create a normal island economy, then scale it up.
@@ -317,7 +322,7 @@ fn create_mainland(
     let size_factor = n;
     economy.population = 80.0 * n;
     economy.population_capacity = 160.0 * n;
-    economy.cash = 1500.0 * n;
+    economy.cash = 15000.0 * n;
     economy.infrastructure_level = 1.5;
     economy.infrastructure_capacity = 3.5;
     economy.infra_credit = 1500.0 * n;
@@ -327,7 +332,12 @@ fn create_mainland(
     for c in C::iter() {
         let idx = c.idx();
         economy.resource_capacity[idx] = INVENTORY_CARRYING_CAPACITY * size_factor * 1.0;
-        economy.inventory[idx] = economy.resource_capacity[idx] * 0.5;
+        // Mainland starts low on commodities so it's hungry for trade.
+        let fill = match c {
+            C::Grain | C::Timber | C::Iron => 0.2,
+            _ => 0.1,
+        };
+        economy.inventory[idx] = economy.resource_capacity[idx] * fill;
     }
 
     // Reset labor allocation for the new production rates.

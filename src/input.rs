@@ -4,8 +4,10 @@
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 
-use crate::components::{IslandMarker, Position, SelectedIsland, SelectedShip, ShipMarker};
-use crate::resources::{IslandPositions, TimeScale};
+use crate::components::{
+    Commodity, IslandMarker, Position, SelectedIsland, SelectedShip, ShipMarker,
+};
+use crate::resources::{HeatmapMode, HeatmapOverlay, IslandPositions, TimeScale};
 
 /// Tracks mouse drag state for panning vs click detection.
 #[derive(Resource, Default)]
@@ -84,6 +86,7 @@ impl Plugin for InputPlugin {
                 handle_selection_input,
                 handle_click_selection,
                 handle_time_scale_input,
+                handle_overlay_input,
                 handle_camera_input,
             )
                 .chain()
@@ -280,6 +283,30 @@ fn handle_click_selection(
             commands.entity(old).remove::<SelectedShip>();
         }
         commands.entity(entity).insert(SelectedIsland);
+    }
+}
+
+fn handle_overlay_input(keys: Res<ButtonInput<KeyCode>>, mut overlay: ResMut<HeatmapOverlay>) {
+    if keys.just_pressed(KeyCode::Digit0) {
+        overlay.0 = None;
+    } else if keys.just_pressed(KeyCode::Digit1) {
+        overlay.0 = Some(HeatmapMode::Commodity(Commodity::Grain));
+    } else if keys.just_pressed(KeyCode::Digit2) {
+        overlay.0 = Some(HeatmapMode::Commodity(Commodity::Timber));
+    } else if keys.just_pressed(KeyCode::Digit3) {
+        overlay.0 = Some(HeatmapMode::Commodity(Commodity::Iron));
+    } else if keys.just_pressed(KeyCode::Digit4) {
+        overlay.0 = Some(HeatmapMode::Commodity(Commodity::Tools));
+    } else if keys.just_pressed(KeyCode::Digit5) {
+        overlay.0 = Some(HeatmapMode::Commodity(Commodity::Spices));
+    } else if keys.just_pressed(KeyCode::Digit6) {
+        overlay.0 = Some(HeatmapMode::CashPerCapita);
+    } else if keys.just_pressed(KeyCode::Digit7) {
+        overlay.0 = Some(HeatmapMode::Population);
+    } else if keys.just_pressed(KeyCode::Digit8) {
+        overlay.0 = Some(HeatmapMode::Infrastructure);
+    } else if keys.just_pressed(KeyCode::Digit9) {
+        overlay.0 = Some(HeatmapMode::ShipWealth);
     }
 }
 

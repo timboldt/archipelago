@@ -205,7 +205,7 @@ impl ShipState {
         match archetype {
             // (speed_mult, capacity_mult, labor_mult, wear_mult)
             ShipArchetype::Clipper => (1.50, 0.50, 1.50, 1.50),
-            ShipArchetype::Shorthaul => (1.00, 1.00, 0.50, 0.80),
+            ShipArchetype::Shorthaul => (1.00, 1.00, 0.50, 0.25),
             ShipArchetype::Freighter => (0.75, 2.00, 0.75, 1.00),
         }
     }

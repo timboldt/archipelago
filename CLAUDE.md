@@ -50,13 +50,16 @@ The codebase now uses **Bevy 0.16** ECS throughout.
 
 ## Key Constants & Configuration
 
-Island count, map size, and fleet size are configurable via CLI (`--islands N`, `--no-mainland`). The `WorldConfig` resource (built in `main.rs` from CLI args) holds these values. Defaults: 50 islands, 5000×5000 world, 100 ships, mainland enabled. Map and fleet scale with √(N/50). The mainland is a large island placed 4000–6000 units from the nearest archipelago island in a random direction; it cannot produce spices. Pass `--no-mainland` to disable it. Planning tuning defaults (friction, decay, spread) are set in `main.rs`.
+Island count, map size, and fleet size are configurable via CLI (`--islands N`, `--no-mainland`). The `WorldConfig` resource (built in `main.rs` from CLI args) holds these values. Defaults: 50 islands, 5000×5000 world, 100 ships, mainland enabled. Map and fleet scale with √(N/50). The mainland is a large island placed 2000–3000 units from the nearest archipelago island in a random direction; it cannot produce spices. Pass `--no-mainland` to disable it. Planning tuning defaults (friction, decay, spread) are set in `main.rs`.
 
 ## Runtime Controls
 
 - `[`/`]` — cycle selected ship; `Shift+[`/`Shift+]` — cycle selected island
 - `-`/`=` — decrease/increase sim speed
 - `\` — reset sim speed to 1.0x
+- `1`–`5` — commodity heatmap overlay (Grain, Timber, Iron, Tools, Spices)
+- `6` — cash per capita heatmap; `7` — population heatmap; `8` — infrastructure heatmap; `9` — ship wealth heatmap
+- `0` — turn off heatmap overlay, restore original island colors
 - WASD / arrow keys — pan camera; Q/E or scroll wheel — zoom
 
 ## Documentation Hygiene

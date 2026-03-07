@@ -82,6 +82,7 @@ fn main() {
             market_spread: 0.10,
         }))
         .insert_resource(FrameTimingsRes::default())
+        .init_resource::<HeatmapOverlay>()
         .insert_resource(config)
         .add_plugins(simulation::SimulationPlugin)
         .add_plugins(rendering::RenderingPlugin)

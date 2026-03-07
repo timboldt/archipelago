@@ -73,7 +73,7 @@ const SCARCITY_REFERENCE: f32 = 120.0;
 /// Probability an island has zero specialization in a given commodity.
 const SPECIALIZATION_ZERO_PROBABILITY: f32 = 0.40;
 /// Higher zero-probability for spice specialization (rarer resource).
-const SPICE_SPECIALIZATION_ZERO_PROBABILITY: f32 = 0.75;
+const SPICE_SPECIALIZATION_ZERO_PROBABILITY: f32 = 0.50;
 
 // --- Focus resource boost ---
 /// Production multiplier applied to the island's focus commodity.
@@ -178,7 +178,7 @@ impl IslandEconomy {
                     if rng.gen_bool(SPICE_SPECIALIZATION_ZERO_PROBABILITY as f64) {
                         0.0
                     } else {
-                        rng.gen_range(0.08..0.45)
+                        rng.gen_range(0.15..0.60)
                     }
                 }
             };

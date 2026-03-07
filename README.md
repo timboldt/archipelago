@@ -49,6 +49,12 @@ cargo +nightly fmt
 | Shift + `[` / Shift + `]` | Cycle selected island (prev / next) |
 | `-` / `=` | Decrease / increase simulation speed (0.25x steps) |
 | `\` | Reset simulation speed to 1.0x |
+| `1`–`5` | Commodity heatmap overlay (Grain, Timber, Iron, Tools, Spices) |
+| `6` | Cash per capita heatmap |
+| `7` | Population heatmap |
+| `8` | Infrastructure heatmap |
+| `9` | Ship wealth heatmap (poorest red, richest green) |
+| `0` | Turn off heatmap overlay, restore original island colors |
 
 Selection is mutually exclusive: selecting a ship deselects the island and vice versa.
 
@@ -162,7 +168,7 @@ Selection is mutually exclusive: selecting a ship deselects the island and vice 
 - **Islands:** 50 by default (configurable via `--islands N`); map size and fleet scale with island count
 - **World size:** 5000 × 5000 at 50 islands, scales as √(N/50) × 5000
 - **Ships:** 2× island count (initial fleet)
-- **Mainland:** enabled by default (`--no-mainland` to disable), placed 4000–6000 units from the nearest island in a random direction, economically equivalent to all archipelago islands combined, cannot produce spices
+- **Mainland:** enabled by default (`--no-mainland` to disable), placed 2000–3000 units from the nearest island in a random direction, economically equivalent to all archipelago islands combined, cannot produce spices
 - **Starting tick:** 500 (ships begin with pre-aged ledger data)
 - **Planning tuning defaults** (set in `main.rs`): global friction 1.0, info decay rate 0.003, market spread 0.10
 

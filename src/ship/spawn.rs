@@ -63,8 +63,11 @@ pub fn spawn_ships(
         }
         ship.seed_initial_market_view(island_seed_data, STARTING_SIM_TICK, start_island_id, rng);
 
-        let (movement, trading, mut profile, ship_ledger) = ship.into_components();
+        let (movement, mut trading, mut profile, ship_ledger) = ship.into_components();
         profile.home_island_id = Some(start_island_id);
+        if forced_archetype.is_some() {
+            trading.cash *= 10.0;
+        }
         let mesh = match profile.archetype {
             ShipArchetype::Clipper => clipper_mesh.clone(),
             ShipArchetype::Freighter => freighter_mesh.clone(),

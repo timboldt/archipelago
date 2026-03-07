@@ -5,12 +5,16 @@ use bevy::prelude::*;
 use crate::components::{IslandMarker, ShipArchetype, ShipMarker, ShipProfile, COMMODITY_COUNT};
 use crate::island::IslandEconomy;
 use crate::resources::{
-    FrameTimingsRes, PlanningTuningRes, TimeScale, PERF_HUD_UPDATE_INTERVAL_SECS,
+    FrameTimingsRes, HeatmapMode, HeatmapOverlay, PlanningTuningRes, TimeScale,
+    PERF_HUD_UPDATE_INTERVAL_SECS,
 };
 use crate::ship::TARGET_SHIPS_PER_ISLAND;
 
 #[derive(Component)]
 pub struct HudText;
+
+#[derive(Component)]
+pub struct OverlayLabel;
 
 pub fn setup_hud(mut commands: Commands) {
     commands.spawn((
@@ -29,8 +33,28 @@ pub fn setup_hud(mut commands: Commands) {
         },
         BackgroundColor(Color::srgba(0.03, 0.06, 0.12, 0.82)),
     ));
+
+    // Overlay label centered at top of screen.
+    commands.spawn((
+        OverlayLabel,
+        Text::new(""),
+        TextFont {
+            font_size: 20.0,
+            ..default()
+        },
+        TextColor(Color::WHITE),
+        TextLayout::new_with_justify(JustifyText::Center),
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(10.0),
+            left: Val::Percent(50.0),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.03, 0.06, 0.12, 0.82)),
+    ));
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn update_hud(
     mut query: Query<&mut Text, With<HudText>>,
     islands: Query<&IslandEconomy, With<IslandMarker>>,
@@ -131,4 +155,26 @@ pub fn update_hud(
     hud_text.push_str(&format!("  Total: {:.2}\n", frame_timings.total_ms));
 
     text.0 = hud_text;
+}
+
+pub fn update_overlay_label(
+    mut query: Query<&mut Text, With<OverlayLabel>>,
+    overlay: Res<HeatmapOverlay>,
+) {
+    let Ok(mut text) = query.single_mut() else {
+        return;
+    };
+    text.0 = match overlay.0 {
+        Some(mode) => {
+            let label = match mode {
+                HeatmapMode::Commodity(c) => IslandEconomy::resource_label(c),
+                HeatmapMode::CashPerCapita => "Cash/Capita",
+                HeatmapMode::Population => "Population",
+                HeatmapMode::Infrastructure => "Infrastructure",
+                HeatmapMode::ShipWealth => "Ship Wealth",
+            };
+            format!("Overlay: {}", label)
+        }
+        None => String::new(),
+    };
 }
