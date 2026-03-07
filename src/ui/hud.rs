@@ -105,23 +105,23 @@ pub fn update_hud(
 
     let resource_names = ["Grain", "Timber", "Iron", "Tools", "Spices"];
     let mut hud_text = String::new();
-    hud_text.push_str("Legend\n");
+    hud_text.push_str("Resources\n");
     for (i, name) in resource_names.iter().enumerate() {
         hud_text.push_str(&format!("  {}: {:.0}\n", name, total_inventory[i]));
     }
     hud_text.push_str(&format!(
-        "\nShips: {} (Cl/Fr/Sh: {}/{}/{})\n",
-        ship_count, clipper_count, freighter_count, shorthaul_count
+        "\nShips (CL: {} FR: {} SH: {})\n",
+        clipper_count, freighter_count, shorthaul_count
     ));
-    hud_text.push_str(&format!("Population: {:.0}\n", total_population));
+    hud_text.push_str(&format!("\nPopulation: {:.0}K\n", total_population));
     hud_text.push_str(&format!("Cash: {:.0}\n", total_cash));
     hud_text.push_str(&format!("Industry: {:.2}\n", avg_infrastructure));
     hud_text.push_str(&format!("Friction x: {:.2}\n", friction_mult));
     hud_text.push_str("\nPerf (ms)\n");
-    hud_text.push_str(&format!("  Economy: {:.2}\n", frame_timings.economy_ms));
-    hud_text.push_str(&format!("  Movement: {:.2}\n", frame_timings.movement_ms));
+    // hud_text.push_str(&format!("  Economy: {:.2}\n", frame_timings.economy_ms));
+    // hud_text.push_str(&format!("  Movement: {:.2}\n", frame_timings.movement_ms));
     hud_text.push_str(&format!("  Dock: {:.2}\n", frame_timings.dock_ms));
-    hud_text.push_str(&format!("  Friction: {:.2}\n", frame_timings.friction_ms));
+    // hud_text.push_str(&format!("  Friction: {:.2}\n", frame_timings.friction_ms));
     hud_text.push_str(&format!("  Total: {:.2}\n", frame_timings.total_ms));
 
     **text = hud_text;
