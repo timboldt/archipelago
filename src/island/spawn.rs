@@ -311,11 +311,11 @@ fn create_mainland(
         0.0,                         // Spices — mainland cannot make spices
     ];
     economy.consumption_rates = [
-        rng.gen_range(1.0..1.8) * n,   // Grain
-        rng.gen_range(0.15..0.3) * n,  // Timber
-        rng.gen_range(0.15..0.3) * n,  // Iron
-        rng.gen_range(0.2..0.4) * n,   // Tools
-        rng.gen_range(0.06..0.12) * n, // Spices — it consumes spices but can't make them
+        rng.gen_range(1.0..1.8) * n,  // Grain
+        rng.gen_range(0.15..0.3) * n, // Timber
+        rng.gen_range(0.15..0.3) * n, // Iron
+        rng.gen_range(0.2..0.4) * n,  // Tools
+        rng.gen_range(0.3..0.6) * n,  // Spices — it consumes spices but can't make them
     ];
 
     // Scale capacities and population to match combined archipelago.

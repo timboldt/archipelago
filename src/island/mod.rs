@@ -178,7 +178,7 @@ impl IslandEconomy {
                     if rng.gen_bool(SPICE_SPECIALIZATION_ZERO_PROBABILITY as f64) {
                         0.0
                     } else {
-                        rng.gen_range(0.15..0.60)
+                        rng.gen_range(0.25..0.85)
                     }
                 }
             };
