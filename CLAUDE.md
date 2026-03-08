@@ -60,6 +60,7 @@ Island count, map size, and fleet size are configurable via CLI (`--islands N`, 
 - `1`–`5` — commodity heatmap overlay (Grain, Timber, Iron, Tools, Spices)
 - `6` — cash per capita heatmap; `7` — population heatmap; `8` — infrastructure heatmap; `9` — ship wealth heatmap
 - `0` — turn off heatmap overlay, restore original island colors
+- `H` — toggle HUD; `I` — toggle inspector; `L` — toggle legend
 - WASD / arrow keys — pan camera; Q/E or scroll wheel — zoom
 
 ## Documentation Hygiene

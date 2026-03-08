@@ -59,6 +59,9 @@ cargo +nightly fmt
 | `8` | Infrastructure heatmap |
 | `9` | Ship wealth heatmap (poorest red, richest green) |
 | `0` | Turn off heatmap overlay, restore original island colors |
+| `H` | Toggle HUD visibility |
+| `I` | Toggle inspector panel visibility |
+| `L` | Toggle legend visibility |
 
 Selection is mutually exclusive: selecting a ship deselects the island and vice versa.
 

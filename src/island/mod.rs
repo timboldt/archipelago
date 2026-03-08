@@ -66,8 +66,8 @@ const TOOLS_CONSUMPTION_SCALE: f32 = 0.04;
 const INDUSTRIAL_LABOR_SCALING: f32 = 0.012;
 /// Logarithmic scale factor for scarcity-based pricing.
 const SCARCITY_LOG_SCALE: f32 = 2.4;
-/// Reference inventory level for scarcity price normalization.
-const SCARCITY_REFERENCE: f32 = 120.0;
+/// Per-capita passive income per tick (represents internal island economy).
+const PER_CAPITA_PASSIVE_INCOME: f32 = 0.15;
 
 // --- Island resource specialization ---
 /// Probability an island has zero specialization in a given commodity.
@@ -261,6 +261,7 @@ impl IslandEconomy {
             PriceEntry {
                 prices: [0.0; COMMODITY_COUNT],
                 inventories: [0.0; COMMODITY_COUNT],
+                capacities: [0.0; COMMODITY_COUNT],
                 cash: 0.0,
                 infrastructure_level: 0.0,
                 tick_updated: 0,
@@ -482,7 +483,7 @@ impl IslandEconomy {
         let timber_idx = Commodity::Timber.idx();
         let tools_idx = Commodity::Tools.idx();
 
-        let labor_multiplier = (self.population * INDUSTRIAL_LABOR_SCALING).clamp(0.25, 8.0);
+        let labor_multiplier = (self.population * INDUSTRIAL_LABOR_SCALING).clamp(0.25, 120.0);
         let local_tools_per_1k_pop = if self.population > 0.0 {
             self.inventory[tools_idx] * 1000.0 / self.population
         } else {
@@ -529,6 +530,10 @@ impl IslandEconomy {
                 .min(self.infrastructure_capacity);
         }
 
+        // Passive per-capita income representing the island's internal economy.
+        // This keeps islands liquid enough to buy imports from ships.
+        self.cash += self.population * PER_CAPITA_PASSIVE_INCOME * dt;
+
         self.recompute_local_prices_with_ledger(tick, ledger);
     }
 
@@ -537,13 +542,16 @@ impl IslandEconomy {
         for resource in Commodity::iter() {
             let index = resource.idx();
             let inventory = self.inventory[index].max(0.0);
-            let scarcity_pressure = (SCARCITY_REFERENCE / (inventory + 1.0)).ln_1p();
+            let capacity = self.resource_capacity[index].max(1.0);
+            // Scarcity pressure is 0.0 when inventory == capacity.
+            let scarcity_pressure = (capacity / (inventory + 1.0)).ln().max(0.0);
             self.local_prices[index] =
                 BASE_COSTS[index] * (1.0 + SCARCITY_LOG_SCALE * scarcity_pressure);
         }
         if let Some(entry) = ledger.get_mut(self.id) {
             entry.prices = self.local_prices;
             entry.inventories = self.inventory;
+            entry.capacities = self.resource_capacity;
             entry.cash = self.cash;
             entry.infrastructure_level = self.infrastructure_level;
             entry.tick_updated = tick;
@@ -554,6 +562,7 @@ impl IslandEconomy {
     pub fn mark_seen(&self, tick: u64, ledger: &mut PriceLedger) {
         if let Some(entry) = ledger.get_mut(self.id) {
             entry.last_seen_tick = tick;
+            entry.capacities = self.resource_capacity;
         }
     }
 
@@ -574,10 +583,24 @@ impl IslandEconomy {
             return (0.0, 0.0);
         }
 
-        let total_value = amount * price;
-        self.inventory[index] += amount;
+        // Limit amount by island's available cash (allow limited negative cash
+        // for "barter-like" trades that resolve within the docking cycle).
+        // Overdraft scales with population so larger islands can sustain bigger trades.
+        let max_overdraft = 800.0 + self.population * 5.0;
+        let affordable_amount = if self.cash > -max_overdraft {
+            ((self.cash + max_overdraft) / price).min(amount)
+        } else {
+            0.0
+        };
+
+        if affordable_amount <= 0.0 {
+            return (0.0, 0.0);
+        }
+
+        let total_value = affordable_amount * price;
+        self.inventory[index] += affordable_amount;
         self.cash -= total_value;
-        (amount, total_value)
+        (affordable_amount, total_value)
     }
 
     /// Sells `resource` to a ship at ask price, limited by island inventory.
@@ -669,6 +692,7 @@ mod tests {
         let entry = ledger[0];
         assert_eq!(entry.prices, economy.local_prices);
         assert_eq!(entry.inventories, economy.inventory);
+        assert_eq!(entry.capacities, economy.resource_capacity);
         approx_eq(entry.cash, economy.cash);
         approx_eq(entry.infrastructure_level, economy.infrastructure_level);
         assert_eq!(entry.tick_updated, 42);
@@ -676,7 +700,7 @@ mod tests {
     }
 
     #[test]
-    fn sell_to_island_accepts_goods_beyond_cash() {
+    fn sell_to_island_allows_limited_negative_cash() {
         let mut rng = StdRng::seed_from_u64(11);
         let (mut economy, _ledger) = IslandEconomy::new(0, 1, &mut rng);
         economy.cash = 10.0;
@@ -684,15 +708,16 @@ mod tests {
         let starting_tools = economy.inventory[Commodity::Tools.idx()];
         let expected_price = 120.0 * (1.0 - 0.1 * 0.5);
 
+        // Island has 10.0 cash and allowed overdraft of 800.0.
         let (filled, paid) = economy.sell_to_island(Commodity::Tools, 1.0, 0.1);
 
         approx_eq(filled, 1.0);
         approx_eq(paid, expected_price);
+        approx_eq(economy.cash, 10.0 - expected_price);
         approx_eq(
             economy.inventory[Commodity::Tools.idx()],
             starting_tools + 1.0,
         );
-        assert!(economy.cash < 0.0);
     }
 
     #[test]

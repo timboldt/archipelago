@@ -52,6 +52,8 @@ pub struct PriceEntry {
     pub prices: [f32; COMMODITY_COUNT],
     /// Observed local inventories by resource.
     pub inventories: [f32; COMMODITY_COUNT],
+    /// Observed local resource capacities.
+    pub capacities: [f32; COMMODITY_COUNT],
     /// Observed island cash/liquidity.
     pub cash: f32,
     /// Observed island infrastructure level.

@@ -7,6 +7,22 @@ use crate::components::{
 };
 use crate::island::IslandEconomy;
 
+/// Resource tracking whether inspector panels are visible.
+#[derive(Resource)]
+pub struct InspectorVisible(pub bool);
+
+impl Default for InspectorVisible {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
+pub fn toggle_inspector(keys: Res<ButtonInput<KeyCode>>, mut visible: ResMut<InspectorVisible>) {
+    if keys.just_pressed(KeyCode::KeyI) {
+        visible.0 = !visible.0;
+    }
+}
+
 #[derive(Component)]
 pub struct ShipInspectorText;
 
@@ -15,6 +31,7 @@ pub struct IslandInspectorText;
 
 pub fn update_ship_inspector(
     mut commands: Commands,
+    visible: Res<InspectorVisible>,
     mut inspector_q: Query<(Entity, &mut Text, &mut Node), With<ShipInspectorText>>,
     selected_ship: Query<(&ShipMovement, &ShipTrading, &ShipProfile), With<SelectedShip>>,
 ) {
@@ -31,7 +48,7 @@ pub fn update_ship_inspector(
             Node {
                 position_type: PositionType::Absolute,
                 left: Val::Px(14.0),
-                top: Val::Px(390.0),
+                bottom: Val::Px(14.0),
                 display: Display::None,
                 ..default()
             },
@@ -43,6 +60,11 @@ pub fn update_ship_inspector(
     let Ok((_, mut text, mut node)) = inspector_q.single_mut() else {
         return;
     };
+
+    if !visible.0 {
+        node.display = Display::None;
+        return;
+    }
 
     let Ok((movement, trading, profile)) = selected_ship.single() else {
         node.display = Display::None;
@@ -112,12 +134,14 @@ pub fn update_ship_inspector(
     s.push_str(&format!("  Wealth: {:.1}\n", wealth));
     s.push_str(&format!("  {}\n", cargo_text));
     s.push_str("  [ / ]: Prev / Next ship\n");
+    s.push_str("  [I] Toggle inspector\n");
 
     text.0 = s;
 }
 
 pub fn update_island_inspector(
     mut commands: Commands,
+    visible: Res<InspectorVisible>,
     mut inspector_q: Query<(Entity, &mut Text, &mut Node), With<IslandInspectorText>>,
     selected_island: Query<&IslandEconomy, With<SelectedIsland>>,
 ) {
@@ -133,7 +157,7 @@ pub fn update_island_inspector(
             Node {
                 position_type: PositionType::Absolute,
                 left: Val::Px(14.0),
-                top: Val::Px(390.0),
+                bottom: Val::Px(14.0),
                 display: Display::None,
                 ..default()
             },
@@ -145,6 +169,11 @@ pub fn update_island_inspector(
     let Ok((_, mut text, mut node)) = inspector_q.single_mut() else {
         return;
     };
+
+    if !visible.0 {
+        node.display = Display::None;
+        return;
+    }
 
     let Ok(economy) = selected_island.single() else {
         node.display = Display::None;
@@ -191,6 +220,7 @@ pub fn update_island_inspector(
         economy.spice_morale_bonus,
     ));
     s.push_str("  { / }: Prev / Next island\n");
+    s.push_str("  [I] Toggle inspector\n");
 
     text.0 = s;
 }

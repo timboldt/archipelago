@@ -8,9 +8,7 @@
 
 use bevy::prelude::Vec2;
 
-use crate::components::{
-    bid_multiplier, Commodity, BASE_COSTS, COMMODITY_COUNT, INVENTORY_CARRYING_CAPACITY,
-};
+use crate::components::{bid_multiplier, Commodity, BASE_COSTS, COMMODITY_COUNT};
 
 use super::{PlanningTuning, ShipState};
 
@@ -94,6 +92,7 @@ impl ShipState {
 
         let quoted_sell_price = self.ledger()[target_id].prices[resource.idx()];
         let quoted_inventory = self.ledger()[target_id].inventories[resource.idx()].max(0.0);
+        let quoted_capacity = self.ledger()[target_id].capacities[resource.idx()].max(1.0);
         let has_quoted_sell_price = quoted_sell_price.is_finite() && quoted_sell_price > 0.0;
         let median_market_price = self.median_price_for_resource(resource);
         let quoted_bid_price = quoted_sell_price * bid_multiplier(context.tuning.market_spread);
@@ -142,7 +141,7 @@ impl ShipState {
             fallback_cash
         };
 
-        let available_storage = (INVENTORY_CARRYING_CAPACITY - quoted_inventory).max(0.0);
+        let available_storage = (quoted_capacity - quoted_inventory).max(0.0);
         let effective_lot_size = lot_size.max(0.0).min(available_storage);
         if effective_lot_size <= 0.0 {
             return f32::NEG_INFINITY;
@@ -369,7 +368,8 @@ mod tests {
     fn calculate_utility_full_destination_inventory_returns_neg_inf() {
         let mut ship = make_ship_with_ledger(2);
         ship.ledger_mut()[1].prices[Commodity::Grain.idx()] = 200.0;
-        ship.ledger_mut()[1].inventories[Commodity::Grain.idx()] = INVENTORY_CARRYING_CAPACITY;
+        ship.ledger_mut()[1].inventories[Commodity::Grain.idx()] =
+            ship.ledger_mut()[1].capacities[Commodity::Grain.idx()];
         ship.ledger_mut()[1].cash = 100_000.0;
         ship.ledger_mut()[1].tick_updated = 100;
 

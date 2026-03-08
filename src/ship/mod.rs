@@ -20,7 +20,7 @@ use crate::island::IslandEconomy;
 /// Units of commodity bought or sold per dock trade action.
 const TRADE_ACTION_VOLUME: f32 = 18.0;
 /// Cash each ship starts with.
-pub const STARTING_CASH: f32 = 400.0;
+pub const STARTING_CASH: f32 = 1000.0;
 /// Default bid/ask spread fraction applied to market prices.
 const DEFAULT_MARKET_SPREAD: f32 = 0.10;
 /// EMA learning rate for route profitability history.
@@ -39,6 +39,8 @@ const RESERVE_PRICE_FLOOR: f32 = 0.60;
 const DOCK_IDLE_RISK_RAMP_PER_TICK: f32 = 0.015;
 /// Maximum allowed idle-dock utility floor before forced departure.
 const MAX_DOCK_IDLE_RISK_ALLOWANCE: f32 = 1.5;
+/// Minimum positive utility required to commit to buying cargo.
+const MIN_BEST_UTILITY_FOR_LOAD: f32 = 0.05;
 
 #[derive(Clone, Copy, Debug)]
 pub struct PlanningTuning {
@@ -159,6 +161,7 @@ impl ShipState {
                 PriceEntry {
                     prices: [0.0; COMMODITY_COUNT],
                     inventories: [0.0; COMMODITY_COUNT],
+                    capacities: [crate::components::INVENTORY_CARRYING_CAPACITY; COMMODITY_COUNT],
                     cash: 0.0,
                     infrastructure_level: 0.0,
                     tick_updated: 0,
@@ -468,32 +471,28 @@ impl ShipState {
         island_id: usize,
         island: &mut IslandEconomy,
         tuning: &PlanningTuning,
-    ) -> DockAction {
-        if self.last_dock_action != DockAction::None {
-            return self.last_dock_action;
-        }
-
+    ) -> f32 {
         let Some((resource, carrying_amount)) = self.cargo else {
-            return self.last_dock_action;
+            return 0.0;
         };
         if carrying_amount <= 0.0 {
-            return self.last_dock_action;
+            return 0.0;
         }
         let bid_price = island.bid_price(resource, tuning.market_spread);
         if !bid_price.is_finite() || bid_price <= 0.0 {
-            return self.last_dock_action;
+            return 0.0;
         }
 
         // Refuse to sell at a big loss — clear target so departure planning picks a better port.
         if self.purchase_price > 0.0 && bid_price < self.purchase_price * RESERVE_PRICE_FLOOR {
             self.target_island_id = None;
-            return self.last_dock_action;
+            return 0.0;
         }
 
         let (sold_amount, gross_revenue) =
             island.sell_to_island(resource, carrying_amount, tuning.market_spread);
         if sold_amount <= 0.0 || gross_revenue <= 0.0 {
-            return self.last_dock_action;
+            return 0.0;
         }
 
         self.cash += gross_revenue;
@@ -518,7 +517,7 @@ impl ShipState {
         self.just_sold_resource = Some(resource);
         self.last_dock_action = DockAction::Sold;
         self.dock_idle_ticks = 0;
-        self.last_dock_action
+        sold_amount
     }
 
     pub fn trade_settle_until_stuck(
@@ -528,10 +527,6 @@ impl ShipState {
         tuning: &PlanningTuning,
         max_steps: usize,
     ) -> bool {
-        if self.last_dock_action != DockAction::None {
-            return false;
-        }
-
         let mut settled_any = false;
         for _ in 0..max_steps.max(1) {
             if self.has_no_cargo() {
@@ -539,11 +534,11 @@ impl ShipState {
             }
 
             self.last_dock_action = DockAction::None;
-            match self.trade_unload_if_carrying(current_island_id, island, tuning) {
-                DockAction::Sold => {
-                    settled_any = true;
-                }
-                DockAction::None | DockAction::Bought => break,
+            let sold_amount = self.trade_unload_if_carrying(current_island_id, island, tuning);
+            if sold_amount > 0.0 {
+                settled_any = true;
+            } else {
+                break;
             }
 
             if self.is_bankrupt() {
@@ -565,10 +560,6 @@ impl ShipState {
         exclude: Option<Commodity>,
         context: &LoadPlanningContext<'_>,
     ) -> DockAction {
-        if self.last_dock_action != DockAction::None {
-            return self.last_dock_action;
-        }
-
         let remaining_volume = self.remaining_cargo_volume();
         if remaining_volume <= 0.0 {
             return self.last_dock_action;
@@ -635,7 +626,7 @@ impl ShipState {
             return self.last_dock_action;
         }
 
-        if !best_utility.is_finite() {
+        if !best_utility.is_finite() || best_utility < MIN_BEST_UTILITY_FOR_LOAD {
             self.dock_idle_ticks = self.dock_idle_ticks.saturating_add(1);
             return self.last_dock_action;
         }
@@ -680,6 +671,7 @@ impl ShipState {
             if island_ledger_snapshot[i].tick_updated >= ship_entry.tick_updated {
                 ship_entry.prices = island_ledger_snapshot[i].prices;
                 ship_entry.inventories = island_ledger_snapshot[i].inventories;
+                ship_entry.capacities = island_ledger_snapshot[i].capacities;
                 ship_entry.cash = island_ledger_snapshot[i].cash;
                 ship_entry.infrastructure_level = island_ledger_snapshot[i].infrastructure_level;
                 ship_entry.tick_updated = island_ledger_snapshot[i].tick_updated;
@@ -703,6 +695,7 @@ impl ShipState {
             if incoming_entry.tick_updated > island_ledger_buffer[i].tick_updated {
                 island_ledger_buffer[i].prices = incoming_entry.prices;
                 island_ledger_buffer[i].inventories = incoming_entry.inventories;
+                island_ledger_buffer[i].capacities = incoming_entry.capacities;
                 island_ledger_buffer[i].cash = incoming_entry.cash;
                 island_ledger_buffer[i].infrastructure_level = incoming_entry.infrastructure_level;
                 island_ledger_buffer[i].tick_updated = incoming_entry.tick_updated;
@@ -922,6 +915,7 @@ impl ShipState {
             self.ledger[island_id] = PriceEntry {
                 prices,
                 inventories,
+                capacities: economy.resource_capacity,
                 cash: observed_cash,
                 infrastructure_level: observed_infra,
                 tick_updated: observed_tick,
@@ -934,6 +928,7 @@ impl ShipState {
             self.ledger[home_island_id] = PriceEntry {
                 prices: economy.local_prices,
                 inventories: economy.inventory,
+                capacities: economy.resource_capacity,
                 cash: economy.cash,
                 infrastructure_level: economy.infrastructure_level,
                 tick_updated: current_tick,
@@ -1236,14 +1231,14 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(91);
         let (mut island, _ledger) = IslandEconomy::new(0, 2, &mut rng);
         island.inventory = [300.0, 0.0, 0.0, 0.0, 0.0];
-        island.local_prices = [100.0, 1000.0, 1000.0, 1000.0, 1000.0];
+        island.local_prices = [90.0, 1000.0, 1000.0, 1000.0, 1000.0];
 
         let mut ship = ShipState::new(Vec2::new(0.0, 0.0), 300.0, 2, 0);
         ship.cash = 10_000.0;
         ship.archetype = ShipArchetype::Clipper;
         ship.recompute_operational_traits();
         ship.max_cargo_volume = 20.0;
-        ship.ledger[1].prices[Commodity::Grain.idx()] = 90.0;
+        ship.ledger[1].prices[Commodity::Grain.idx()] = 110.0;
         ship.ledger[1].inventories[Commodity::Grain.idx()] = 0.0;
         ship.ledger[1].cash = 100_000.0;
         ship.ledger[1].tick_updated = 200;
@@ -1298,17 +1293,22 @@ mod tests {
         island0.cash = 5000.0;
         island1.inventory[Commodity::Grain.idx()] = 5.0;
         island1.local_prices[Commodity::Grain.idx()] = 200.0;
+        // Give island1 some timber to sell to the ship.
+        island1.inventory[Commodity::Timber.idx()] = 100.0;
+        island1.local_prices[Commodity::Timber.idx()] = 30.0;
         island1.cash = 5000.0;
 
         // Ship starts docked at island1 with grain cargo.
         let mut ship = ShipState::new(Vec2::new(10.0, 0.0), 300.0, 2, 1);
+        ship.recompute_operational_traits();
         ship.cash = 1000.0;
         ship.cargo = Some((Commodity::Grain, 15.0));
         ship.purchase_price = 10.0;
         ship.docked_at = Some(1);
 
         // Update ledger with island1's info so ship knows about it.
-        ship.ledger[0].prices = island0.local_prices;
+        ship.ledger[0].prices[Commodity::Grain.idx()] = 10.0;
+        ship.ledger[0].prices[Commodity::Timber.idx()] = 200.0;
         ship.ledger[0].inventories = island0.inventory;
         ship.ledger[0].cash = island0.cash;
         ship.ledger[0].tick_updated = 100;
@@ -1320,7 +1320,7 @@ mod tests {
         let tuning = PlanningTuning::default();
         let ship_tuning = ship.effective_tuning(&tuning);
 
-        // Step 1: sell cargo at island1.
+        // Step 1 & 4: sell cargo at island1 AND buy next cargo.
         ship.begin_dock_tick();
         let _settled = ship.trade_settle_until_stuck(1, &mut island1, &ship_tuning, 3);
         assert!(ship.has_no_cargo(), "Ship should have sold its cargo");
@@ -1339,7 +1339,7 @@ mod tests {
         // Island ledger should now have data from the ship's knowledge.
         assert!(island_ledger_buf[0].tick_updated > 0);
 
-        // Step 4: buy cargo for next leg.
+        // Step 4: buy cargo for next leg (now possible in same tick/cycle after Sell).
         let departures = [0.0_f32, 0.0_f32];
         let positions = [Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0)];
         let ctx = LoadPlanningContext {
@@ -1349,7 +1349,9 @@ mod tests {
             tuning: &ship_tuning,
             outbound_recent_departures: &departures,
         };
-        let _ = ship.trade_load_if_empty(&mut island1, ship.just_sold_resource(), &ctx);
+        let action = ship.trade_load_if_empty(&mut island1, ship.just_sold_resource(), &ctx);
+        assert_eq!(action, DockAction::Bought);
+        assert!(!ship.has_no_cargo(), "Ship should have bought new cargo");
 
         // Step 5: plan departure — sync merged ledger and verify no panic.
         ship.sync_ledger_from_snapshot(&island_ledger_buf);

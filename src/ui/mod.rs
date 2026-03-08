@@ -11,12 +11,16 @@ pub struct UiPlugin;
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<legend::LegendVisible>();
+        app.init_resource::<hud::HudVisible>();
+        app.init_resource::<inspector::InspectorVisible>();
         app.add_systems(Startup, (hud::setup_hud, legend::setup_legend));
         app.add_systems(
             Update,
             (
+                hud::toggle_hud,
                 hud::update_hud,
                 hud::update_overlay_label,
+                inspector::toggle_inspector,
                 inspector::update_ship_inspector,
                 inspector::update_island_inspector,
                 legend::toggle_legend,

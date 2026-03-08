@@ -83,12 +83,6 @@ fn trade_pass(
             let _ = ship.pay_dynamic_docking_tax(island_economy);
         }
 
-        if island_economy.cash < 0.0 {
-            let deficit = (-island_economy.cash).min(ship.current_cash().max(0.0));
-            ship.deduct_cash(deficit);
-            island_economy.cash += deficit;
-        }
-
         if ship.is_bankrupt() {
             island_economy.apply_ship_bankruptcy_settlement(ship.removal_cash_settlement());
             bankrupt_local[local_idx] = true;

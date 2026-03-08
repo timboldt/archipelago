@@ -10,6 +10,16 @@ use crate::resources::{
 };
 use crate::ship::TARGET_SHIPS_PER_ISLAND;
 
+/// Resource tracking whether the HUD is visible.
+#[derive(Resource)]
+pub struct HudVisible(pub bool);
+
+impl Default for HudVisible {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
 #[derive(Component)]
 pub struct HudText;
 
@@ -54,9 +64,16 @@ pub fn setup_hud(mut commands: Commands) {
     ));
 }
 
+pub fn toggle_hud(keys: Res<ButtonInput<KeyCode>>, mut visible: ResMut<HudVisible>) {
+    if keys.just_pressed(KeyCode::KeyH) {
+        visible.0 = !visible.0;
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn update_hud(
-    mut query: Query<&mut Text, With<HudText>>,
+    visible: Res<HudVisible>,
+    mut query: Query<(&mut Text, &mut Node), With<HudText>>,
     islands: Query<&IslandEconomy, With<IslandMarker>>,
     ships: Query<&ShipProfile, With<ShipMarker>>,
     planning_tuning: Res<PlanningTuningRes>,
@@ -64,9 +81,15 @@ pub fn update_hud(
     mut frame_timings: ResMut<FrameTimingsRes>,
     time: Res<Time>,
 ) {
-    let Ok(mut text) = query.single_mut() else {
+    let Ok((mut text, mut node)) = query.single_mut() else {
         return;
     };
+
+    if !visible.0 {
+        node.display = Display::None;
+        return;
+    }
+    node.display = Display::Flex;
 
     // Aggregate island stats.
     let mut total_inventory = [0.0_f32; COMMODITY_COUNT];
@@ -153,17 +176,25 @@ pub fn update_hud(
     hud_text.push_str(&format!("  Dock: {:.2}\n", frame_timings.dock_ms));
     // hud_text.push_str(&format!("  Friction: {:.2}\n", frame_timings.friction_ms));
     hud_text.push_str(&format!("  Total: {:.2}\n", frame_timings.total_ms));
+    hud_text.push_str("\n[H] Toggle HUD");
 
     text.0 = hud_text;
 }
 
 pub fn update_overlay_label(
-    mut query: Query<&mut Text, With<OverlayLabel>>,
+    visible: Res<HudVisible>,
+    mut query: Query<(&mut Text, &mut Node), With<OverlayLabel>>,
     overlay: Res<HeatmapOverlay>,
 ) {
-    let Ok(mut text) = query.single_mut() else {
+    let Ok((mut text, mut node)) = query.single_mut() else {
         return;
     };
+
+    if !visible.0 {
+        node.display = Display::None;
+        return;
+    }
+    node.display = Display::Flex;
     text.0 = match overlay.0 {
         Some(mode) => {
             let label = match mode {

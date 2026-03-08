@@ -219,7 +219,7 @@ pub fn spawn_islands(
         let (mainland_economy, mainland_ledger, mainland_pos) =
             create_mainland(mainland_id, total_islands, config, &island_positions, rng);
 
-        let scale = (mainland_economy.population_capacity / 20.0)
+        let scale = (mainland_economy.population_capacity / 5.0)
             .sqrt()
             .clamp(0.5, 5.0);
         let mesh = meshes.add(make_island_mesh(rng, scale));
@@ -322,7 +322,7 @@ fn create_mainland(
     let size_factor = n;
     economy.population = 80.0 * n;
     economy.population_capacity = 160.0 * n;
-    economy.cash = 15000.0 * n;
+    economy.cash = 5000.0 * n;
     economy.infrastructure_level = 1.5;
     economy.infrastructure_capacity = 3.5;
     economy.infra_credit = 1500.0 * n;
